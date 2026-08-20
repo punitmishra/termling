@@ -18,10 +18,10 @@ breathes, blinks, waves, spins, and throws sparks in real time — over a
 stage as you work.
 
 Crucially, **your shell stays entirely your own.** termling never wraps or
-replaces it — no toy shell, nothing between you and zsh. Your terminal, your
-config, your completions, your prompt, your aliases: all untouched. A tiny
-`preexec`/`precmd` hook just whispers "a command started / finished with exit N"
-to the companion pane, and the creature reacts.
+replaces it — no toy shell, nothing between you and your shell. Your terminal,
+your config, your completions, your prompt, your aliases: all untouched. A tiny
+hook (zsh, bash, or fish) just whispers "a command started / finished with exit
+N" to the companion pane, and the creature reacts.
 
 Successful commands earn **XP** (streaks multiply it), you can switch **themes**
 to suit your terminal, and there's a small **arcade** of mini-games for when a
@@ -49,6 +49,17 @@ pane is this program.
 
 Grab the binary one of these ways, then wire up the shell hook (**Quick start**,
 below):
+
+**One-line installer** (macOS & Linux, no sudo — installs to `~/.local/bin`):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/punitmishra/termling/main/scripts/install.sh | sh
+```
+
+It detects your OS/arch, downloads the matching release tarball, verifies its
+SHA-256, and drops `termling` in `${TERMLING_INSTALL_DIR:-$HOME/.local/bin}`.
+This installer script is the *only* part of termling that touches the network;
+the binary itself never does.
 
 **Homebrew** (macOS & Linux):
 
@@ -81,23 +92,31 @@ cargo build --release                        # binary at target/release/termling
 
 ## Quick start
 
-**Install the hook** in your `~/.zshrc` (additive — it only registers
-`preexec`/`precmd` and changes nothing else about your shell):
+**Install the hook** for your shell (additive — it only registers the shell's
+command-lifecycle callbacks and changes nothing else):
 
 ```sh
-eval "$(termling init zsh)"
+eval "$(termling init zsh)"        # ~/.zshrc
+eval "$(termling init bash)"       # ~/.bashrc
+termling init fish | source        # ~/.config/fish/config.fish
 ```
 
+Not sure which? Bare `termling init` auto-detects from `$SHELL`.
+
 That's it. **The companion spawns itself** beside your shell the next time you
-open one — a tmux split if you're in tmux, an iTerm2 split (via AppleScript) if
-you're in iTerm, once per **scope** (see below) so several panes share one
-creature instead of piling up. Just start working.
+open one — a tmux split if you're in tmux, or an iTerm2 / kitty / WezTerm split,
+once per **scope** (see below) so several panes share one creature instead of
+piling up. Just start working.
 
 Every command makes the creature react — `focused` while it runs, `toiling` if
 it drags on, then `happy`/`excited` on success or `confused` on failure — and a
 small feed shows your recent commands with a `✓`/`✗`.
 
-If you'd rather place it yourself (or you're not in tmux/iTerm), set
+Companion didn't appear? Run **`termling doctor`** — a quick, network-free check
+that reports your scope, whether a companion is live, whether your terminal can
+auto-split, and whether the binary is on your `PATH`, each with a concrete fix.
+
+If you'd rather place it yourself (or your terminal can't auto-split), set
 `TERMLING_AUTOSPAWN=0` and open it however you like:
 
 ```sh
@@ -115,6 +134,21 @@ To flip through the doodle frames without a socket or a pane:
 ```sh
 cargo run -- --preview
 ```
+
+## Staying up to date
+
+```sh
+termling update            # upgrade in place
+termling update --check    # just report whether a newer version exists
+termling version           # print the installed version
+```
+
+`update` **delegates to whatever installed termling** — it runs `brew upgrade
+termling` for a Homebrew install, `cargo install termling --force` for a Cargo
+install, or prints the one-line installer for a manual/tarball install. **The
+binary makes no network calls of its own** and never checks for updates in the
+background; it only shells out to `brew`/`cargo` (which do their own fetching)
+at the moment you run the command.
 
 ## How the link works
 
@@ -147,6 +181,11 @@ the companion:
 2. inside **tmux** → the tmux *session* (one companion per session).
 3. inside **iTerm2** → the iTerm *window*.
 4. otherwise → `default`.
+
+kitty and WezTerm have no per-window case yet, so shells there land on the
+`default` scope — a *single shared companion* per terminal app (the roster still
+lists each shell). Per-window scoping for them is a documented follow-up; set
+`TERMLING_SCOPE` yourself if you want one companion per window today.
 
 Auto-spawn uses a dependency-free single-instance guard: the companion's socket
 `bind` *is* the lock (creating the socket file is atomic), so if two shells start
@@ -184,20 +223,25 @@ one-line `"<xp> <best_streak>"` (no serde) — and restored next launch.
 
 termling is built to be **boring and inspectable** on the security front:
 
-- **No network, ever.** The shell↔companion link is a local Unix *datagram*
-  socket at `${XDG_RUNTIME_DIR:-<tmpdir>}/termling-<scope>.sock`. Nothing leaves
-  your machine — no telemetry, no analytics, no auto-update, no phone-home.
+- **The binary makes no network calls, ever.** The shell↔companion link is a
+  local Unix *datagram* socket at
+  `${XDG_RUNTIME_DIR:-<tmpdir>}/termling-<scope>.sock`. Nothing leaves your
+  machine — no telemetry, no analytics, no background update checks, no
+  phone-home. `termling update` only *delegates* to `brew`/`cargo` (which fetch)
+  at the moment you run it; the network-touching installer is a separate,
+  user-invoked shell script (`scripts/install.sh`), never the binary.
 - **It never runs your commands.** The companion is *ambient*: it reads exit
   codes and timings and draws a creature. Your shell input is never piped
   through it, evaluated by it, or otherwise seen by it — only the small event
   line the hook chooses to send (see **Privacy**).
 - **The hook is additive and fire-and-forget.** `eval "$(termling init zsh)"`
-  only registers `preexec`/`precmd`; it changes nothing else about your shell,
-  and a failed send is silently dropped so your prompt never stalls.
+  (or the bash/fish equivalent) only registers the shell's command-lifecycle
+  callbacks; it changes nothing else about your shell, and a failed send is
+  silently dropped so your prompt never stalls.
 - **Auto-spawn runs local UI commands.** To open its own pane it may invoke
-  `tmux` (inside tmux) or `osascript`/AppleScript (inside iTerm2) — the latter
-  makes macOS prompt once for Automation permission. Set `TERMLING_AUTOSPAWN=0`
-  to disable this entirely and place the pane yourself.
+  `tmux`, `osascript`/AppleScript (iTerm2, which prompts once for Automation
+  permission), `kitten @` (kitty), or `wezterm cli` (WezTerm). Set
+  `TERMLING_AUTOSPAWN=0` to disable this entirely and place the pane yourself.
 - **Tiny, auditable dependency surface** — only `ratatui` and `crossterm`; the
   socket protocol, RNG, games, and themes are all hand-rolled.
 - **Local & single-user by design.** The socket lives in your runtime dir with
@@ -227,11 +271,16 @@ anywhere else.
 
 Honest about what it is — a fun, small, **local** toy:
 
-- **zsh only.** The hook is zsh (`preexec`/`precmd`); bash/fish aren't wired up
-  yet (contributions welcome — see **Contributing**).
-- **Auto-spawn is macOS tmux + iTerm2 only.** Everywhere else (Kitty, WezTerm,
-  Terminal.app, Linux terminals) set `TERMLING_AUTOSPAWN=0` and open the pane
-  yourself with `termling tmux`, a zellij layout, or a plain second window.
+- **zsh, bash, and fish.** zsh and fish use native command-lifecycle hooks with
+  sub-second timing; bash has no native `preexec`, so it's emulated with a
+  `DEBUG` trap + `PROMPT_COMMAND` and its command duration is **second-resolution**
+  (enough for the long-command flair). Other shells (PowerShell, nushell, …)
+  aren't wired up yet — contributions welcome (see **Contributing**).
+- **Auto-spawn is tmux / iTerm2 / kitty / WezTerm.** kitty needs remote control
+  enabled (`allow_remote_control yes`). Everywhere else (Terminal.app, most Linux
+  terminals) set `TERMLING_AUTOSPAWN=0` and open the pane yourself with
+  `termling tmux`, a zellij layout, or a plain second window. kitty and WezTerm
+  share one companion per terminal app (see **Scopes**).
 - **Needs a modern terminal** — Unicode glyphs and 24-bit truecolor, plus a pane
   at least ~22 columns wide; in a 256-color or ASCII-only terminal the art
   degrades.
@@ -327,8 +376,10 @@ combination lights up for free.
 - `app.rs`   — state, mood signals, XP/streaks, the recent-command feed, the multi-shell roster, flair, persistence
 - `event.rs` — the shell↔companion wire format, scopes, the datagram socket, liveness probe, and receiver
 - `emit.rs`  — the `emit` subcommand the hook fires per command (+ privacy knob)
-- `init.rs`  — the `init zsh` subcommand that prints the hook
-- `tmux.rs`  — spawning the companion (`tmux`/`ensure`): tmux split, iTerm AppleScript, single-instance guard
+- `init.rs`  — the `init [zsh|bash|fish]` subcommand that prints the hook (+ `$SHELL` auto-detect)
+- `tmux.rs`  — spawning the companion (`tmux`/`ensure`): tmux / iTerm2 / kitty / WezTerm split, single-instance guard
+- `update.rs`— the `update`/`version` subcommands: delegate to brew/cargo, no network
+- `doctor.rs`— the `doctor` subcommand: a network-free environment checklist
 - `mood.rs`  — signals → mood
 - `doodle.rs`— characters + mood expressions + scenery → colored ASCII scene
 - `games/`   — the arcade: a `MiniGame` trait plus one module per game
@@ -341,8 +392,9 @@ RNG, and themes are all hand-rolled to keep it lightweight.
 
 ## Roadmap
 
-bash/fish hooks (zsh-only for now); auto-spawn beyond tmux + iTerm2 (Kitty,
-WezTerm, Terminal.app); per-command mood nuance; and a `zsh/net/socket`
+Per-window scoping for kitty & WezTerm (one companion per window, not per app);
+sub-second bash duration where a modern bash is available; more shells
+(PowerShell, nushell); per-command mood nuance; and a `zsh/net/socket`
 zero-spawn emit path.
 
 ## Contributing
@@ -357,7 +409,8 @@ hackable. Some good first PRs, roughly by area:
 - **A new theme** — six colors and a name in `theme.rs`.
 - **A new mood or scene** — a rule in `mood.rs` plus an expression/backdrop in
   `doodle.rs`.
-- **Another shell** — a `bash`/`fish` hook alongside the zsh one in `init.rs`.
+- **Another shell** — a hook alongside the zsh/bash/fish ones in `init.rs`
+  (PowerShell and nushell are unclaimed).
 
 To get set up:
 

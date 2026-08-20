@@ -2,11 +2,12 @@
 //! `tmux` subcommand) and automatically (the `ensure` subcommand the shell hook
 //! fires at startup).
 //!
-//! Two window managers can split themselves: **tmux** (a native `split-window`)
-//! and **iTerm2** (via AppleScript). Everywhere else we just print the recipe.
-//! A companion spawned here inherits `TERMLING_COMPANION=1` (so its own
-//! shell never spawns another) and the resolved `TERMLING_SCOPE` (so it
-//! binds the exact socket the shell emits to).
+//! Four window managers can split themselves: **tmux** (native `split-window`),
+//! **iTerm2** (via AppleScript), **kitty** (`kitten @ launch`, needs remote
+//! control), and **WezTerm** (`wezterm cli split-pane`). Everywhere else we just
+//! print the recipe. A companion spawned here inherits `TERMLING_COMPANION=1`
+//! (so its own shell never spawns another) and the resolved `TERMLING_SCOPE` (so
+//! it binds the exact socket the shell emits to).
 
 use std::io;
 use std::process::Command;
@@ -86,6 +87,53 @@ fn spawn_companion(scope: &str) -> bool {
         return matches!(status, Ok(s) if s.success());
     }
 
+    if std::env::var_os("KITTY_WINDOW_ID").is_some() {
+        // kitty's remote control: split a new OS-window-less pane to the side and
+        // keep focus on the shell. Requires `allow_remote_control` in kitty.conf;
+        // if it's off the command fails and we fall through to the recipe.
+        let status = Command::new("kitten")
+            .args([
+                "@",
+                "launch",
+                "--type=window",
+                "--location=vsplit",
+                "--dont-take-focus",
+                "--",
+                "env",
+                "TERMLING_COMPANION=1",
+                &format!("TERMLING_SCOPE={scope}"),
+                &exe,
+            ])
+            .status();
+        return matches!(status, Ok(s) if s.success());
+    }
+
+    if std::env::var_os("WEZTERM_PANE").is_some() {
+        // WezTerm's CLI splits the active pane; it moves focus to the new pane, so
+        // hand focus back to the shell afterward. Best-effort — a failed activate
+        // still leaves a working companion.
+        let status = Command::new("wezterm")
+            .args([
+                "cli",
+                "split-pane",
+                "--right",
+                "--",
+                "env",
+                "TERMLING_COMPANION=1",
+                &format!("TERMLING_SCOPE={scope}"),
+                &exe,
+            ])
+            .status();
+        if matches!(status, Ok(s) if s.success()) {
+            let shell_pane = std::env::var("WEZTERM_PANE").unwrap_or_default();
+            let _ = Command::new("wezterm")
+                .args(["cli", "activate-pane", "--pane-id", &shell_pane])
+                .status();
+            return true;
+        }
+        return false;
+    }
+
     false
 }
 
@@ -108,8 +156,13 @@ fn print_recipe(exe: &str) {
     println!("            or manually:  tmux split-window -h -l {SIDEBAR_COLS} '{exe}'");
     println!("  iTerm2  : runs automatically once the hook is installed;");
     println!("            it also splits when you run this from an iTerm window.");
+    println!("  kitty   : auto-splits with remote control on");
+    println!("            (put `allow_remote_control yes` in kitty.conf).");
+    println!("  WezTerm : auto-splits via `wezterm cli` once the hook is installed.");
     println!("  zellij  : zellij --layout contrib/termling.kdl");
     println!("  plain   : open a second terminal window and run:  {exe}");
-    println!("\nAnd add the hook to your ~/.zshrc so the creature reacts (and auto-spawns):");
-    println!("  eval \"$({exe} init zsh)\"");
+    println!("\nAnd add the hook to your shell rc so the creature reacts (and auto-spawns):");
+    println!("  zsh :  eval \"$({exe} init zsh)\"       # ~/.zshrc");
+    println!("  bash:  eval \"$({exe} init bash)\"      # ~/.bashrc");
+    println!("  fish:  {exe} init fish | source        # ~/.config/fish/config.fish");
 }

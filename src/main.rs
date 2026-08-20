@@ -1,15 +1,19 @@
 //! termling — a mood-driven doodle + arcade that lives *beside* your real
 //! shell. Your shell stays entirely your own (its terminal, config, completions,
-//! and prompt); a tiny zsh hook fires events at this companion, which renders the
-//! creature and reacts. Entry point: dispatch subcommands, then set up the
+//! and prompt); a tiny shell hook fires events at this companion, which renders
+//! the creature and reacts. Entry point: dispatch subcommands, then set up the
 //! terminal, run the event loop, and tear it down cleanly even on error.
 //!
-//! Subcommands: `emit` (hook fires this per command), `init zsh` (prints the
-//! hook), `tmux`/`ensure` (open/auto-spawn the companion), `demo` (a scripted
-//! self-running tour), `--preview` (dump the art); no args runs the companion.
+//! Subcommands: `emit` (hook fires this per command), `init [zsh|bash|fish]`
+//! (prints the hook, auto-detecting the shell when unspecified), `tmux`/`ensure`
+//! (open/auto-spawn the companion), `update` (delegates to brew/cargo — the
+//! binary makes no network calls), `doctor` (network-free environment check),
+//! `version`, `demo` (a scripted self-running tour), `--preview` (dump the art);
+//! no args runs the companion.
 
 mod app;
 mod demo;
+mod doctor;
 mod doodle;
 mod emit;
 mod event;
@@ -20,6 +24,7 @@ mod rng;
 mod theme;
 mod tmux;
 mod ui;
+mod update;
 
 use std::io::{self, Stdout};
 use std::time::Instant;
@@ -46,6 +51,15 @@ fn main() -> io::Result<()> {
         Some("tmux") => tmux::launch(),
         // Auto-spawn hook: spawn a companion for this scope unless one exists.
         Some("ensure") => tmux::ensure(),
+        // Bring termling up to date by delegating to brew/cargo (no network here).
+        Some("update") => update::run(&args[2..]),
+        // A network-free environment check: "will it work, why didn't it spawn."
+        Some("doctor") => doctor::run(),
+        // Report the compiled-in version.
+        Some("version") | Some("--version") | Some("-V") => {
+            println!("termling {}", update::VERSION);
+            Ok(())
+        }
         // A scripted, self-running tour of the companion (records the demo GIF).
         Some("demo") => demo::run(),
         // Dump every mood's scene to stdout for art tweaking.

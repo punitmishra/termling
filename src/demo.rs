@@ -163,6 +163,17 @@ mod tests {
     /// the mood thresholds ever change.
     #[test]
     fn replay_parades_through_the_headline_moods_and_flairs() {
+        // Sandbox persisted state (like `run` does) so `App::new` starts from
+        // zero XP. This test asserts a specific flair *ordering* — the long
+        // build must surface `LongDone`, not a `LevelUp` — which only holds from
+        // a clean slate. Without this the test loads the developer's real
+        // ~/.local/state/termling progress and fails once they've banked any XP,
+        // even though it passes on a fresh CI machine.
+        std::env::set_var(
+            "XDG_STATE_HOME",
+            std::env::temp_dir().join("termling-demo-replay-state-nonexistent"),
+        );
+
         let script = timeline();
         let mut app = App::new();
         let mut next = 0usize;
