@@ -299,12 +299,12 @@ fn expression(mood: Mood, t: usize) -> Expr {
             e("o", "o", "__", d, "", 0)
         }
         Mood::Curious => {
-            let (le, re) = if (t / 5) % 6 == 0 {
+            let (le, re) = if (t / 5).is_multiple_of(6) {
                 ("-", "-")
             } else {
                 ("o", "o")
             };
-            let q = if (t / 6) % 2 == 0 {
+            let q = if (t / 6).is_multiple_of(2) {
                 "        ?"
             } else {
                 "          ?"
@@ -319,14 +319,18 @@ fn expression(mood: Mood, t: usize) -> Expr {
         }
         Mood::Toiling => {
             // Furrowed, gritted, sweating — and a slow chugging bar below.
-            let grit = if (t / 3) % 2 == 0 { "><" } else { "--" };
+            let grit = if (t / 3).is_multiple_of(2) {
+                "><"
+            } else {
+                "--"
+            };
             let sweat = ["  '        `", "     '   `", "        ' `", ""][(t / 3) % 4];
             let chug = ["  [=   ]", "  [==  ]", "  [=== ]", "  [====]"][(t / 4) % 4];
             e(">", "<", grit, sweat, chug, 0)
         }
         Mood::Caffeinated => {
-            let jit = if t % 2 == 0 { 1 } else { -1 };
-            let (top, bot) = if t % 2 == 0 {
+            let jit = if t.is_multiple_of(2) { 1 } else { -1 };
+            let (top, bot) = if t.is_multiple_of(2) {
                 ("  ! *  ! * !", "  * !  * ! *")
             } else {
                 (" * ! *  ! * ", " ! *  ! * ! ")
@@ -334,7 +338,7 @@ fn expression(mood: Mood, t: usize) -> Expr {
             e("O", "O", "WW", top, bot, jit)
         }
         Mood::Happy => {
-            let up = (t / 4) % 2 == 0;
+            let up = (t / 4).is_multiple_of(2);
             let (top, bot) = if up {
                 ("   +        *", "      *")
             } else {
@@ -343,7 +347,7 @@ fn expression(mood: Mood, t: usize) -> Expr {
             e("^", "^", "\\/", top, bot, 0)
         }
         Mood::Proud => {
-            let top = if (t / 4) % 2 == 0 {
+            let top = if (t / 4).is_multiple_of(2) {
                 "     *   *"
             } else {
                 "      * *"
@@ -357,7 +361,7 @@ fn expression(mood: Mood, t: usize) -> Expr {
             e("*", "*", "oo", top, bot, 0)
         }
         Mood::Confused => {
-            let ph = (t / 5) % 2 == 0;
+            let ph = (t / 5).is_multiple_of(2);
             let (le, re) = if ph { ("o", "O") } else { ("O", "o") };
             let top = if ph { "    ? ! ?" } else { "    ! ? !" };
             let bot = if ph { "           '" } else { "            '" };
@@ -475,7 +479,7 @@ fn mote(
     twinkle: usize,
 ) -> Option<char> {
     let h = hash(c, salt);
-    if h % density != 0 {
+    if !h.is_multiple_of(density) {
         return None;
     }
     let phase = (h / density) as usize + t / twinkle.max(1);
@@ -486,12 +490,14 @@ fn mote(
 fn background(scene: &Scene, t: usize) -> Vec<Vec<Cell>> {
     let mut bg: Vec<Vec<Cell>> = vec![vec![None; W]; 6];
 
-    for c in 0..W {
+    for (c, cell) in bg[0].iter_mut().enumerate() {
         if let Some(ch) = mote(c, scene.sky, 4, 0x5, t, scene.twinkle) {
-            bg[0][c] = Some((ch, scene.sky_color));
+            *cell = Some((ch, scene.sky_color));
         }
+    }
+    for (c, cell) in bg[5].iter_mut().enumerate() {
         if let Some(ch) = mote(c, scene.ground, 3, 0x9, t, scene.twinkle + 2) {
-            bg[5][c] = Some((ch, scene.ground_color));
+            *cell = Some((ch, scene.ground_color));
         }
     }
 

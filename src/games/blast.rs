@@ -126,7 +126,7 @@ impl MiniGame for Blast {
         }
 
         // Invaders descend on their cadence.
-        if self.tick % Self::drop_period(level) == 0 {
+        if self.tick.is_multiple_of(Self::drop_period(level)) {
             for e in &mut self.enemies {
                 e.y += 1;
             }

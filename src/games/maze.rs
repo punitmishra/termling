@@ -277,7 +277,7 @@ impl MiniGame for Muncher {
             return;
         }
 
-        if self.tick % self.ghost_period() == 0 {
+        if self.tick.is_multiple_of(self.ghost_period()) {
             let (nx, ny) = self.ghost_next();
             self.gx = nx;
             self.gy = ny;

@@ -209,8 +209,9 @@ impl MiniGame for Bounce {
         }
 
         // Paddle.
-        for c in self.px..self.px + PADDLE_W {
-            cells[PADDLE_ROW][c] = ('▔', self.character.body_color());
+        let paddle = ('▔', self.character.body_color());
+        for cell in cells[PADDLE_ROW].iter_mut().skip(self.px).take(PADDLE_W) {
+            *cell = paddle;
         }
 
         // Ball.

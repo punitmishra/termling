@@ -211,7 +211,7 @@ impl MiniGame for Coil {
             self.eaten += 1;
             self.grow_owed += 2;
             // Every fifth bite hardens the arena with a fresh rock.
-            if self.eaten % 5 == 0 {
+            if self.eaten.is_multiple_of(5) {
                 self.add_rock();
             }
             // Sometimes a timed gem appears alongside the next food.
