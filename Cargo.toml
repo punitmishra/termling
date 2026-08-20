@@ -1,0 +1,20 @@
+[package]
+name = "termling"
+version = "0.1.0"
+edition = "2021"
+description = "A tiny mood creature + arcade that lives beside your real zsh, reacting to your commands via a fire-and-forget hook. Your shell stays 100% your own."
+license = "MIT"
+repository = "https://github.com/punitmishra/termling"
+homepage = "https://github.com/punitmishra/termling"
+readme = "README.md"
+keywords = ["tui", "terminal", "zsh", "shell", "toy"]
+categories = ["command-line-utilities"]
+authors = ["Punit Mishra"]
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+
+[[bin]]
+name = "termling"
+path = "src/main.rs"

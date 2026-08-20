@@ -1,0 +1,12 @@
+# Rust build artifacts
+/target
+
+# asciinema demo recordings (kept out of the repo; large & regenerable)
+/shell_doodle_v*
+
+# macOS
+.DS_Store
+
+# editor cruft
+*.swp
+*~

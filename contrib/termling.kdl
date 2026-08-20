@@ -1,0 +1,21 @@
+// zellij layout: your real shell on the left, the termling sidebar on the
+// right. Launch with:  zellij --layout contrib/termling.kdl
+//
+// The sidebar reacts to your shell only once the hook is installed, so add this
+// to your ~/.zshrc first:
+//
+//     eval "$(termling init zsh)"
+//
+// Adjust the `size` below to taste (columns).
+layout {
+    pane split_direction="vertical" {
+        // Your shell — full zsh, config, prompt, plugins, untouched.
+        pane
+        // The companion creature + arcade. TERMLING_COMPANION=1 marks this
+        // as the companion so its shell never tries to auto-spawn another.
+        pane size=34 {
+            command "sh"
+            args "-c" "TERMLING_COMPANION=1 exec termling"
+        }
+    }
+}
