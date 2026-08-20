@@ -159,7 +159,10 @@ pub fn scope() -> String {
     }
     if let Some(iterm) = env_string("ITERM_SESSION_ID") {
         // "wN tM pK:UUID" — the window token is the leading `wN`.
-        let win: String = iterm.chars().take_while(|c| *c != 't' && *c != ':').collect();
+        let win: String = iterm
+            .chars()
+            .take_while(|c| *c != 't' && *c != ':')
+            .collect();
         let win = sanitize(&win);
         if !win.is_empty() {
             return format!("iterm-{win}");

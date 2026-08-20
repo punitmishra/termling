@@ -22,12 +22,12 @@ const START_LIVES: u32 = 3;
 
 pub struct Bounce {
     character: Character,
-    px: usize,             // paddle left edge
-    bx: i32,               // ball column
-    by: i32,               // ball row
-    vx: i32,               // ±1
-    vy: i32,               // ±1
-    bricks: Vec<Vec<u8>>,  // [BRICK_ROWS][GW]: 0 empty, 1 normal, 2 golden
+    px: usize,            // paddle left edge
+    bx: i32,              // ball column
+    by: i32,              // ball row
+    vx: i32,              // ±1
+    vy: i32,              // ±1
+    bricks: Vec<Vec<u8>>, // [BRICK_ROWS][GW]: 0 empty, 1 normal, 2 golden
     score: u32,
     lives: u32,
     boards: u32,

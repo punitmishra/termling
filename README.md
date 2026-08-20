@@ -1,5 +1,16 @@
 # termling
 
+[![CI](https://github.com/punitmishra/termling/actions/workflows/ci.yml/badge.svg)](https://github.com/punitmishra/termling/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/termling.svg)](https://crates.io/crates/termling)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/punitmishra/termling?display_name=tag&sort=semver)](https://github.com/punitmishra/termling/releases)
+
+> An animated ASCII creature that lives *beside* your shell and reacts to how
+> your commands go — shifting moods, earning XP, and hiding a little arcade for
+> when the build is slow. **Your shell stays 100% your own.**
+
+![termling parading through its moods, levelling up, and switching characters](docs/demo.gif)
+
 A little **animated, multi-color** ASCII creature that lives in a pane *beside
 your shell* and reflects **its mood** based on how your commands go. It
 breathes, blinks, waves, spins, and throws sparks in real time — over a
@@ -34,6 +45,40 @@ build is running.
 The left pane is **your own zsh** — termling isn't drawing it. The right
 pane is this program.
 
+## Install
+
+Grab the binary one of these ways, then wire up the shell hook (**Quick start**,
+below):
+
+**Homebrew** (macOS & Linux):
+
+```sh
+brew install punitmishra/termling/termling
+```
+
+**Cargo** (any platform with a Rust toolchain):
+
+```sh
+cargo install termling
+```
+
+**Prebuilt binaries** — download the tarball for your platform from the
+[latest release](https://github.com/punitmishra/termling/releases/latest), then
+drop `termling` anywhere on your `PATH`:
+
+```sh
+tar xzf termling-*-<your-target>.tar.gz
+install -m 0755 termling /usr/local/bin/     # or ~/.local/bin
+```
+
+**From source:**
+
+```sh
+git clone https://github.com/punitmishra/termling
+cd termling
+cargo build --release                        # binary at target/release/termling
+```
+
 ## Quick start
 
 **Install the hook** in your `~/.zshrc` (additive — it only registers
@@ -59,13 +104,6 @@ If you'd rather place it yourself (or you're not in tmux/iTerm), set
 termling tmux                              # splits a 34-col pane (or prints the recipe)
 zellij --layout contrib/termling.kdl       # zellij
 termling                                   # a plain second terminal window
-```
-
-Building from source:
-
-```sh
-cargo build --release      # binary at target/release/termling
-cargo run                  # or just run the companion directly
 ```
 
 The companion is **ambient** by default (it takes no input — your shell has the
@@ -137,10 +175,42 @@ shell's directory, and its last command's result.
 | `TERMLING_NOTIFY` | `1` sends a macOS notification when a long command finishes |
 | `TERMLING_PROJECT_THEME` | `1` auto-themes per project directory |
 
-### Privacy
+### Persistence
 
-Commands can carry secrets (`export TOKEN=…`), so **by default only the command's
-first word leaves your shell**. Tune it with `TERMLING_PRIVACY`:
+Progress is saved to `${XDG_STATE_HOME:-~/.local/state}/termling/state` — a
+one-line `"<xp> <best_streak>"` (no serde) — and restored next launch.
+
+## Security
+
+termling is built to be **boring and inspectable** on the security front:
+
+- **No network, ever.** The shell↔companion link is a local Unix *datagram*
+  socket at `${XDG_RUNTIME_DIR:-<tmpdir>}/termling-<scope>.sock`. Nothing leaves
+  your machine — no telemetry, no analytics, no auto-update, no phone-home.
+- **It never runs your commands.** The companion is *ambient*: it reads exit
+  codes and timings and draws a creature. Your shell input is never piped
+  through it, evaluated by it, or otherwise seen by it — only the small event
+  line the hook chooses to send (see **Privacy**).
+- **The hook is additive and fire-and-forget.** `eval "$(termling init zsh)"`
+  only registers `preexec`/`precmd`; it changes nothing else about your shell,
+  and a failed send is silently dropped so your prompt never stalls.
+- **Auto-spawn runs local UI commands.** To open its own pane it may invoke
+  `tmux` (inside tmux) or `osascript`/AppleScript (inside iTerm2) — the latter
+  makes macOS prompt once for Automation permission. Set `TERMLING_AUTOSPAWN=0`
+  to disable this entirely and place the pane yourself.
+- **Tiny, auditable dependency surface** — only `ratatui` and `crossterm`; the
+  socket protocol, RNG, games, and themes are all hand-rolled.
+- **Local & single-user by design.** The socket lives in your runtime dir with
+  its default permissions; termling assumes a trusted local session and is not
+  hardened against hostile local users sharing your `$XDG_RUNTIME_DIR`.
+
+Found a security issue? Please open a GitHub issue and flag it as
+security-sensitive.
+
+## Privacy
+
+Commands can carry secrets (`export TOKEN=…`), so **by default only the
+command's first word leaves your shell**. Tune it with `TERMLING_PRIVACY`:
 
 | Value  | Sends |
 |--------|-------|
@@ -148,10 +218,26 @@ first word leaves your shell**. Tune it with `TERMLING_PRIVACY`:
 | `full` | the whole command line |
 | `none` | no command text at all — only exit codes and timing |
 
-### Persistence
+Whatever the setting, that data only ever travels the local socket to the
+companion pane, where it picks a mood and fills the recent-command feed. It is
+never persisted beyond the one-line XP file (see **Persistence**) and never sent
+anywhere else.
 
-Progress is saved to `${XDG_STATE_HOME:-~/.local/state}/termling/state` — a
-one-line `"<xp> <best_streak>"` (no serde) — and restored next launch.
+## Limitations
+
+Honest about what it is — a fun, small, **local** toy:
+
+- **zsh only.** The hook is zsh (`preexec`/`precmd`); bash/fish aren't wired up
+  yet (contributions welcome — see **Contributing**).
+- **Auto-spawn is macOS tmux + iTerm2 only.** Everywhere else (Kitty, WezTerm,
+  Terminal.app, Linux terminals) set `TERMLING_AUTOSPAWN=0` and open the pane
+  yourself with `termling tmux`, a zellij layout, or a plain second window.
+- **Needs a modern terminal** — Unicode glyphs and 24-bit truecolor, plus a pane
+  at least ~22 columns wide; in a 256-color or ASCII-only terminal the art
+  degrades.
+- **No Windows** — it relies on Unix domain sockets and a POSIX shell.
+- **Single machine, single user** — no remote/SSH-forwarded companion and no
+  multi-host awareness; the socket is local only.
 
 ## XP & levels
 
@@ -253,7 +339,7 @@ combination lights up for free.
 Only two dependencies (`ratatui` + `crossterm`); the socket protocol, games,
 RNG, and themes are all hand-rolled to keep it lightweight.
 
-## Not yet
+## Roadmap
 
 bash/fish hooks (zsh-only for now); auto-spawn beyond tmux + iTerm2 (Kitty,
 WezTerm, Terminal.app); per-command mood nuance; and a `zsh/net/socket`

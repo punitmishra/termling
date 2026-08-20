@@ -140,10 +140,7 @@ impl App {
             recent: Vec::new(),
             roster: Vec::new(),
             cwd: None,
-            project_theme: matches!(
-                std::env::var("TERMLING_PROJECT_THEME").as_deref(),
-                Ok("1")
-            ),
+            project_theme: matches!(std::env::var("TERMLING_PROJECT_THEME").as_deref(), Ok("1")),
             flair: None,
         }
     }
@@ -232,7 +229,8 @@ impl App {
         if let Some(i) = self.roster.iter().position(|s| s.id == id) {
             return &mut self.roster[i];
         }
-        self.roster.push(ShellState::new(id.to_string(), self.frame));
+        self.roster
+            .push(ShellState::new(id.to_string(), self.frame));
         self.roster.last_mut().unwrap()
     }
 
@@ -259,8 +257,7 @@ impl App {
         let _ = write!(std::io::stdout(), "\x07");
         let _ = std::io::stdout().flush();
         if matches!(std::env::var("TERMLING_NOTIFY").as_deref(), Ok("1")) {
-            let script =
-                "display notification \"a long command finished\" with title \"termling\"";
+            let script = "display notification \"a long command finished\" with title \"termling\"";
             // Fire and forget — never wait on it inside the render loop.
             let _ = std::process::Command::new("osascript")
                 .arg("-e")
@@ -603,7 +600,10 @@ mod tests {
         }
         assert_eq!(app.recent().len(), RECENT_CAP);
         // Oldest entries dropped; the newest survives.
-        assert_eq!(app.recent().last().unwrap().0, format!("cmd{}", RECENT_CAP + 2));
+        assert_eq!(
+            app.recent().last().unwrap().0,
+            format!("cmd{}", RECENT_CAP + 2)
+        );
     }
 
     #[test]
@@ -656,7 +656,10 @@ mod tests {
         }
         assert_eq!(app.mood(), Mood::Toiling);
         app.apply_event(Event::end(0));
-        assert!(matches!(app.flair(), Some(Flair::LongDone | Flair::LevelUp)));
+        assert!(matches!(
+            app.flair(),
+            Some(Flair::LongDone | Flair::LevelUp)
+        ));
         // And it fades on its own.
         for _ in 0..(FLAIR_TICKS + 1) {
             app.step();

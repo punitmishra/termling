@@ -134,7 +134,11 @@ impl Muncher {
                 continue;
             }
             let dist = (self.px as i32 - nc).abs() + (self.py as i32 - nr).abs();
-            let better = if flee { dist > best_dist } else { dist < best_dist };
+            let better = if flee {
+                dist > best_dist
+            } else {
+                dist < best_dist
+            };
             if better {
                 best_dist = dist;
                 best = (nc as usize, nr as usize);
@@ -241,7 +245,11 @@ impl MiniGame for Muncher {
         if self.frightened > 0 {
             format!("pellets {}  ·  ghost scared!", self.pellets_left())
         } else {
-            format!("pellets {}  ·  board {}", self.pellets_left(), self.boards + 1)
+            format!(
+                "pellets {}  ·  board {}",
+                self.pellets_left(),
+                self.boards + 1
+            )
         }
     }
     fn character_name(&self) -> &'static str {

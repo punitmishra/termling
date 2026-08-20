@@ -1,0 +1,184 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Build a native release binary on each target OS and package it as a
+  # self-contained tarball (binary + README + LICENSE at the archive root, so
+  # the Homebrew formula can `bin.install "termling"` regardless of arch),
+  # alongside a .sha256 for verification.
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          bin="target/${{ matrix.target }}/release/termling"
+          strip "$bin" || true
+          staging="termling-${version}-${{ matrix.target }}"
+          mkdir -p "$staging"
+          cp "$bin" README.md LICENSE "$staging/"
+          # Files at the archive root (no wrapping dir) so `bin.install` is
+          # arch-independent.
+          tar czf "${staging}.tar.gz" -C "$staging" .
+          shasum -a 256 "${staging}.tar.gz" > "${staging}.tar.gz.sha256"
+          echo "Packaged ${staging}.tar.gz"
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            termling-*.tar.gz
+            termling-*.tar.gz.sha256
+
+  # Collect every platform's tarball + checksum and cut the GitHub Release.
+  release:
+    name: GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/termling-*.tar.gz
+            dist/termling-*.tar.gz.sha256
+          generate_release_notes: true
+
+  # Publish to crates.io. Guarded on the secret so a fork or an unconfigured
+  # repo doesn't fail the release; if the token is absent the step is a no-op.
+  publish-crate:
+    name: Publish to crates.io
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "CARGO_REGISTRY_TOKEN not set — skipping crates.io publish."
+            exit 0
+          fi
+          cargo publish --locked
+
+  # Regenerate the Homebrew formula in the tap repo from the freshly built
+  # per-arch URLs + checksums. Guarded on the tap PAT; if it's absent the job
+  # skips and the formula is committed manually from the release assets.
+  bump-formula:
+    name: Bump Homebrew formula
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate on token
+        id: gate
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN not set — skipping formula bump."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Download checksums
+        if: steps.gate.outputs.skip == 'false'
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checkout tap
+        if: steps.gate.outputs.skip == 'false'
+        uses: actions/checkout@v4
+        with:
+          repository: punitmishra/homebrew-termling
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Generate & push formula
+        if: steps.gate.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          base="https://github.com/punitmishra/termling/releases/download/${GITHUB_REF_NAME}"
+          sha() { cut -d' ' -f1 "dist/termling-${version}-$1.tar.gz.sha256"; }
+          sha_arm="$(sha aarch64-apple-darwin)"
+          sha_intel="$(sha x86_64-apple-darwin)"
+          sha_linux="$(sha x86_64-unknown-linux-gnu)"
+
+          mkdir -p tap/Formula
+          cat > tap/Formula/termling.rb <<EOF
+          class Termling < Formula
+            desc "Tiny mood creature + arcade that lives beside your real zsh"
+            homepage "https://github.com/punitmishra/termling"
+            version "${version}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "${base}/termling-${version}-aarch64-apple-darwin.tar.gz"
+                sha256 "${sha_arm}"
+              end
+              on_intel do
+                url "${base}/termling-${version}-x86_64-apple-darwin.tar.gz"
+                sha256 "${sha_intel}"
+              end
+            end
+
+            on_linux do
+              on_intel do
+                url "${base}/termling-${version}-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "${sha_linux}"
+              end
+            end
+
+            def install
+              bin.install "termling"
+            end
+
+            test do
+              # --preview dumps every mood scene to stdout; "focused" is one of them.
+              assert_match "focused", shell_output("#{bin}/termling --preview")
+            end
+          end
+          EOF
+
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/termling.rb
+          git commit -m "termling ${version}" || { echo "No formula changes."; exit 0; }
+          git push

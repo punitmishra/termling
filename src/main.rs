@@ -3,8 +3,13 @@
 //! and prompt); a tiny zsh hook fires events at this companion, which renders the
 //! creature and reacts. Entry point: dispatch subcommands, then set up the
 //! terminal, run the event loop, and tear it down cleanly even on error.
+//!
+//! Subcommands: `emit` (hook fires this per command), `init zsh` (prints the
+//! hook), `tmux`/`ensure` (open/auto-spawn the companion), `demo` (a scripted
+//! self-running tour), `--preview` (dump the art); no args runs the companion.
 
 mod app;
+mod demo;
 mod doodle;
 mod emit;
 mod event;
@@ -21,8 +26,7 @@ use std::time::Instant;
 
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::{
-    event as term_event,
-    execute,
+    event as term_event, execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
@@ -42,6 +46,8 @@ fn main() -> io::Result<()> {
         Some("tmux") => tmux::launch(),
         // Auto-spawn hook: spawn a companion for this scope unless one exists.
         Some("ensure") => tmux::ensure(),
+        // A scripted, self-running tour of the companion (records the demo GIF).
+        Some("demo") => demo::run(),
         // Dump every mood's scene to stdout for art tweaking.
         Some("--preview") => {
             preview();
@@ -69,16 +75,16 @@ fn run_tui() -> io::Result<()> {
     result
 }
 
-type Tui = Terminal<CrosstermBackend<Stdout>>;
+pub(crate) type Tui = Terminal<CrosstermBackend<Stdout>>;
 
-fn setup() -> io::Result<Tui> {
+pub(crate) fn setup() -> io::Result<Tui> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     Terminal::new(CrosstermBackend::new(stdout))
 }
 
-fn teardown(terminal: &mut Tui) -> io::Result<()> {
+pub(crate) fn teardown(terminal: &mut Tui) -> io::Result<()> {
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()

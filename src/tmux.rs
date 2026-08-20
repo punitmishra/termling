@@ -76,9 +76,7 @@ fn spawn_companion(scope: &str) -> bool {
     if std::env::var_os("ITERM_SESSION_ID").is_some() {
         // iTerm2 has no CLI for splitting, so drive it with AppleScript. The new
         // session runs `env … <exe>` so it carries the guard + scope.
-        let inner = format!(
-            "env TERMLING_COMPANION=1 TERMLING_SCOPE={scope} '{exe}'"
-        );
+        let inner = format!("env TERMLING_COMPANION=1 TERMLING_SCOPE={scope} '{exe}'");
         let script = format!(
             "tell application \"iTerm2\" to tell current session of current window \
              to split vertically with default profile command \"{}\"",
