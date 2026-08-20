@@ -50,6 +50,18 @@ pane is this program.
 Grab the binary one of these ways, then wire up the shell hook (**Quick start**,
 below):
 
+> **Before the first release?** The one-liner, Homebrew, `cargo install
+> termling`, and prebuilt tarballs below all light up with the first tagged
+> release. Until then, install straight from the repo — this works **today**, no
+> release needed and no sudo:
+>
+> ```sh
+> cargo install --git https://github.com/punitmishra/termling
+> ```
+>
+> That puts `termling` on your `PATH` (in `~/.cargo/bin`) and, bonus, lets
+> `termling update` keep you current via `cargo install --force`.
+
 **One-line installer** (macOS & Linux, no sudo — installs to `~/.local/bin`):
 
 ```sh
@@ -87,8 +99,18 @@ install -m 0755 termling /usr/local/bin/     # or ~/.local/bin
 ```sh
 git clone https://github.com/punitmishra/termling
 cd termling
-cargo build --release                        # binary at target/release/termling
+cargo install --path .                        # onto PATH (~/.cargo/bin), no sudo
+# …or just build it and run in place:
+cargo build --release                         # binary at target/release/termling
 ```
+
+> **Try it without installing.** `termling init` bakes the *absolute path* of
+> whichever binary produced it into the hook, so you can point a shell at a
+> local build without touching `PATH` or any rc file:
+>
+> ```sh
+> eval "$(./target/release/termling init zsh)"    # or: init bash | init fish
+> ```
 
 ## Quick start
 
@@ -110,7 +132,14 @@ piling up. Just start working.
 
 Every command makes the creature react — `focused` while it runs, `toiling` if
 it drags on, then `happy`/`excited` on success or `confused` on failure — and a
-small feed shows your recent commands with a `✓`/`✗`.
+small feed shows your recent commands with a `✓`/`✗`. Kick the tires — run a few
+commands and watch the pane:
+
+```sh
+ls && echo works     # ✓ exit 0 → happy, and your success streak climbs
+false                # ✗ exit 1 → confused
+sleep 4              # a long one → toiling, then a finish flourish + a bell
+```
 
 Companion didn't appear? Run **`termling doctor`** — a quick, network-free check
 that reports your scope, whether a companion is live, whether your terminal can
