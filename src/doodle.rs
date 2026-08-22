@@ -100,45 +100,48 @@ impl Character {
     /// Top of the head — ears, antenna, dome. Centered over the eyes.
     fn top(self) -> &'static str {
         match self {
-            Character::Blob => ".------.",
-            Character::Cat => "/\\_/\\",
-            Character::Robot => ".-|-.",
-            Character::Ghost => ".-~~-.",
-            Character::Fox => "/\\ /\\",
-            Character::Comet => "*=--~~",
-            Character::StarSprite => "\\ | /",
-            Character::Mixtape => "(o) (o)",
-            Character::TubeBoy => "\\o o/",
-            Character::Jellyfish => ".:oOo:.",
-            Character::Dragon => "^vVVVv^",
+            Character::Blob => "╭──────╮",
+            Character::Cat => "╭◤╮╭◥╮",
+            Character::Robot => "╭┬────┬╮",
+            Character::Ghost => "╭──────╮",
+            Character::Fox => "╱╲────╱╲",
+            Character::Comet => "✦╭───╮",
+            Character::StarSprite => "╭─✦─╮",
+            Character::Mixtape => "╭─◕──◕─╮",
+            Character::TubeBoy => "╭─◦──◦─╮",
+            Character::Jellyfish => "╭◠◡◠◡╮",
+            Character::Dragon => "^╭──╮^",
         }
     }
 
     /// The base line the creature sits on.
     fn base(self) -> &'static str {
         match self {
-            Character::Blob => "'------'",
-            Character::Cat => "'--v--'",
-            Character::Robot => "[____]",
-            Character::Ghost => "~ ~ ~",
-            Character::Fox => "'--w--'",
-            Character::Comet => ".*. .*.",
-            Character::StarSprite => "/ | \\",
-            Character::Mixtape => "'-o--o-'",
-            Character::TubeBoy => "o_====_o",
-            Character::Jellyfish => "}{}{}{}",
-            Character::Dragon => "'wWWWw'",
+            Character::Blob => "╰─◡──◡─╯",
+            Character::Cat => "╰─◡◡─╯",
+            Character::Robot => "╰─●──●─╯",
+            Character::Ghost => "◡◡◡◡◡◡◡◡",
+            Character::Fox => "╰──◡◡──╯",
+            Character::Comet => "╰╲╲╲─╯",
+            Character::StarSprite => "╰╱●╲╯",
+            Character::Mixtape => "╰─◦──◦─╯",
+            Character::TubeBoy => "╰┬────┬╯",
+            Character::Jellyfish => "╰┈┈┈┈╯",
+            Character::Dragon => "╰─~~─╯",
         }
     }
 
     /// The left/right body walls framing the eyes and mouth.
     fn sides(self) -> (char, char) {
         match self {
-            Character::Robot => ('|', '|'),
-            Character::StarSprite => ('*', '*'),
-            Character::Mixtape => ('[', ']'),
-            Character::TubeBoy => ('{', '}'),
-            Character::Dragon => ('{', '}'),
+            Character::StarSprite => ('◦', '◦'),
+            // Boxy 8-wide bodies get straight walls that line up with the corners.
+            Character::Robot
+            | Character::Ghost
+            | Character::Fox
+            | Character::Mixtape
+            | Character::TubeBoy => ('│', '│'),
+            // Blob, Cat, Comet, Jellyfish, Dragon — soft rounded parenthesis walls.
             _ => ('(', ')'),
         }
     }
@@ -150,71 +153,73 @@ impl Character {
 
     fn palette(self) -> Palette {
         match self {
+            // Softer, slightly-more-pastel palettes — cuter and gentler on a dark
+            // terminal while keeping each creature's identity color and contrast.
             Character::Blob => Palette {
-                base: Color::Rgb(120, 200, 130),
-                accent: Color::Rgb(180, 255, 120),
-                eye: Color::Rgb(245, 245, 245),
-                mouth: Color::Rgb(150, 220, 150),
+                base: Color::Rgb(150, 215, 160),
+                accent: Color::Rgb(195, 250, 165),
+                eye: Color::Rgb(248, 250, 248),
+                mouth: Color::Rgb(175, 222, 178),
             },
             Character::Cat => Palette {
-                base: Color::Rgb(240, 150, 70),
-                accent: Color::Rgb(255, 150, 190),
-                eye: Color::Rgb(255, 230, 120),
-                mouth: Color::Rgb(255, 185, 120),
+                base: Color::Rgb(250, 178, 112),
+                accent: Color::Rgb(255, 185, 208),
+                eye: Color::Rgb(255, 248, 235),
+                mouth: Color::Rgb(255, 200, 150),
             },
             Character::Robot => Palette {
-                base: Color::Rgb(150, 170, 195),
-                accent: Color::Rgb(120, 225, 235),
-                eye: Color::Rgb(255, 95, 95),
-                mouth: Color::Rgb(205, 215, 225),
+                base: Color::Rgb(175, 190, 212),
+                accent: Color::Rgb(160, 228, 236),
+                eye: Color::Rgb(255, 145, 145),
+                mouth: Color::Rgb(212, 222, 232),
             },
             Character::Ghost => Palette {
-                base: Color::Rgb(200, 190, 240),
-                accent: Color::Rgb(150, 200, 255),
-                eye: Color::Rgb(250, 250, 255),
-                mouth: Color::Rgb(210, 200, 245),
+                base: Color::Rgb(214, 206, 246),
+                accent: Color::Rgb(182, 212, 255),
+                eye: Color::Rgb(252, 250, 255),
+                mouth: Color::Rgb(222, 214, 248),
             },
             Character::Fox => Palette {
-                base: Color::Rgb(235, 120, 60),
-                accent: Color::Rgb(255, 240, 230),
-                eye: Color::Rgb(255, 210, 120),
-                mouth: Color::Rgb(250, 160, 110),
+                base: Color::Rgb(245, 152, 106),
+                accent: Color::Rgb(255, 242, 236),
+                eye: Color::Rgb(255, 240, 222),
+                mouth: Color::Rgb(252, 182, 142),
             },
             Character::Comet => Palette {
-                base: Color::Rgb(255, 180, 90),
-                accent: Color::Rgb(255, 240, 150),
-                eye: Color::Rgb(255, 255, 255),
-                mouth: Color::Rgb(255, 140, 80),
+                base: Color::Rgb(255, 200, 136),
+                accent: Color::Rgb(255, 242, 178),
+                eye: Color::Rgb(255, 255, 250),
+                mouth: Color::Rgb(255, 172, 122),
             },
             Character::StarSprite => Palette {
-                base: Color::Rgb(255, 230, 120),
-                accent: Color::Rgb(180, 220, 255),
-                eye: Color::Rgb(255, 255, 255),
-                mouth: Color::Rgb(255, 210, 120),
+                base: Color::Rgb(255, 236, 162),
+                accent: Color::Rgb(198, 226, 255),
+                eye: Color::Rgb(255, 255, 250),
+                mouth: Color::Rgb(255, 222, 158),
             },
             Character::Mixtape => Palette {
-                base: Color::Rgb(200, 120, 220),
-                accent: Color::Rgb(120, 230, 220),
-                eye: Color::Rgb(255, 240, 150),
-                mouth: Color::Rgb(230, 180, 240),
+                base: Color::Rgb(214, 150, 230),
+                accent: Color::Rgb(162, 236, 226),
+                eye: Color::Rgb(255, 248, 226),
+                mouth: Color::Rgb(236, 196, 242),
             },
             Character::TubeBoy => Palette {
-                base: Color::Rgb(130, 180, 200),
-                accent: Color::Rgb(120, 255, 180),
-                eye: Color::Rgb(120, 255, 180),
-                mouth: Color::Rgb(180, 220, 230),
+                base: Color::Rgb(160, 204, 216),
+                accent: Color::Rgb(162, 246, 196),
+                eye: Color::Rgb(200, 255, 230),
+                mouth: Color::Rgb(196, 226, 233),
             },
             Character::Jellyfish => Palette {
-                base: Color::Rgb(150, 190, 255),
-                accent: Color::Rgb(255, 170, 220),
+                base: Color::Rgb(176, 206, 255),
+                accent: Color::Rgb(255, 192, 226),
                 eye: Color::Rgb(255, 255, 255),
-                mouth: Color::Rgb(190, 210, 255),
+                mouth: Color::Rgb(206, 220, 255),
             },
             Character::Dragon => Palette {
-                base: Color::Rgb(120, 200, 120),
-                accent: Color::Rgb(255, 150, 80),
-                eye: Color::Rgb(255, 220, 90),
-                mouth: Color::Rgb(160, 220, 140),
+                base: Color::Rgb(156, 214, 156),
+                accent: Color::Rgb(255, 176, 120),
+                eye: Color::Rgb(255, 244, 206),
+                mouth: Color::Rgb(180, 222, 170),
             },
         }
     }
@@ -237,8 +242,10 @@ pub fn render(mood: Mood, character: Character, frame: u64) -> Doodle {
     let scene = scene_for(mood);
 
     // Foreground: the creature + its mood particles. Transparent everywhere the
-    // character isn't, so the backdrop can peek through.
-    let mut fg: Vec<Vec<Cell>> = vec![vec![None; W]; 6];
+    // character isn't, so the backdrop can peek through. Both layers are fixed
+    // 6×W grids, so they live on the stack — `render` runs ~10×/second and this
+    // keeps it free of per-frame heap allocation (`Cell` is `Copy`).
+    let mut fg: [[Cell; W]; 6] = [[None; W]; 6];
     place_particles(&mut fg[0], &e.top, p.accent);
     place_particles(&mut fg[5], &e.bot, p.accent);
     let left = face_left(e.jit);
@@ -248,7 +255,8 @@ pub fn render(mood: Mood, character: Character, frame: u64) -> Doodle {
     place_face(&mut fg[4], left, &center_cells(character.base(), p.base));
 
     // Backdrop, composited underneath.
-    let bg = background(&scene, t);
+    let mut bg: [[Cell; W]; 6] = [[None; W]; 6];
+    background(&mut bg, &scene, t);
     let rows = (0..6)
         .map(|r| {
             let cells: Vec<(char, Color)> = (0..W)
@@ -292,30 +300,30 @@ fn expression(mood: Mood, t: usize) -> Expr {
     match mood {
         Mood::Sleepy => {
             let z = ["     z", "      z", "       Z", "        ."][(t / 4) % 4];
-            e("-", "-", "~~", z, "", 0)
+            e("˘", "˘", "~~", z, "", 0)
         }
         Mood::Bored => {
             let d = ["        .", "        . .", "        . . .", ""][(t / 6) % 4];
-            e("o", "o", "__", d, "", 0)
+            e("-", "-", "__", d, "", 0)
         }
         Mood::Curious => {
             let (le, re) = if (t / 5).is_multiple_of(6) {
                 ("-", "-")
             } else {
-                ("o", "o")
+                ("◕", "◕")
             };
             let q = if (t / 6).is_multiple_of(2) {
                 "        ?"
             } else {
                 "          ?"
             };
-            e(le, re, "..", q, "", 0)
+            e(le, re, "··", q, "", 0)
         }
         Mood::Focused => {
             let spin = ['|', '/', '-', '\\'][(t / 2) % 4];
             let dots = ["     .", "     ..", "     ...", "     ...."][(t / 3) % 4];
             let top = format!("         {spin}");
-            e("@", "@", "__", &top, dots, 0)
+            e("●", "●", "--", &top, dots, 0)
         }
         Mood::Toiling => {
             // Furrowed, gritted, sweating — and a slow chugging bar below.
@@ -344,7 +352,7 @@ fn expression(mood: Mood, t: usize) -> Expr {
             } else {
                 (" *        +", "    +")
             };
-            e("^", "^", "\\/", top, bot, 0)
+            e("^", "^", "◡◡", top, bot, 0)
         }
         Mood::Proud => {
             let top = if (t / 4).is_multiple_of(2) {
@@ -358,14 +366,14 @@ fn expression(mood: Mood, t: usize) -> Expr {
             let ph = (t / 3) % 3;
             let top = ["  *   .   +", "  .   +   *", "  +   *   ."][ph];
             let bot = ["  +   *   .", "  *   .   +", "  .   +   *"][ph];
-            e("*", "*", "oo", top, bot, 0)
+            e("✦", "✦", "oo", top, bot, 0)
         }
         Mood::Confused => {
             let ph = (t / 5).is_multiple_of(2);
-            let (le, re) = if ph { ("o", "O") } else { ("O", "o") };
+            let (le, re) = if ph { ("◔", "◕") } else { ("◕", "◔") };
             let top = if ph { "    ? ! ?" } else { "    ! ? !" };
             let bot = if ph { "           '" } else { "            '" };
-            e(le, re, "~~", top, bot, 0)
+            e(le, re, "◠◠", top, bot, 0)
         }
     }
 }
@@ -486,10 +494,9 @@ fn mote(
     Some(glyphs[phase % glyphs.len()])
 }
 
-/// Build the 6×`W` backdrop layer for a scene at time `t`.
-fn background(scene: &Scene, t: usize) -> Vec<Vec<Cell>> {
-    let mut bg: Vec<Vec<Cell>> = vec![vec![None; W]; 6];
-
+/// Fill the 6×`W` backdrop layer for a scene at time `t`, in place — the caller
+/// owns the (stack-allocated) grid so no allocation happens here.
+fn background(bg: &mut [[Cell; W]; 6], scene: &Scene, t: usize) {
     for (c, cell) in bg[0].iter_mut().enumerate() {
         if let Some(ch) = mote(c, scene.sky, 4, 0x5, t, scene.twinkle) {
             *cell = Some((ch, scene.sky_color));
@@ -509,7 +516,6 @@ fn background(scene: &Scene, t: usize) -> Vec<Vec<Cell>> {
             }
         }
     }
-    bg
 }
 
 // --- canvas helpers --------------------------------------------------------
@@ -537,20 +543,22 @@ fn place_particles(row: &mut [Cell], tpl: &str, accent: Color) {
     }
 }
 
-/// The eye line as `FACE` cells: walls in base, pupils in eye color.
+/// The eye line as `FACE` cells: walls in base, pupils in eye color, and two
+/// faint blush dots on the cheeks (cols 1 & 8) in the accent color — a cheap,
+/// high-impact cuteness lever that frames the eyes without competing with them.
 fn eyes_cells(le: &str, re: &str, (l, r): (char, char), p: &Palette) -> Vec<(char, Color)> {
     let le = le.chars().next().unwrap_or('o');
     let re = re.chars().next().unwrap_or('o');
     vec![
         (l, p.base),
-        (' ', p.base),
+        ('·', p.accent),
         (le, p.eye),
         (' ', p.base),
         (' ', p.base),
         (' ', p.base),
         (' ', p.base),
         (re, p.eye),
-        (' ', p.base),
+        ('·', p.accent),
         (r, p.base),
     ]
 }
@@ -604,4 +612,89 @@ fn coalesce_cells(cells: Vec<(char, Color)>) -> Row {
         row.push(Seg { text, color });
     }
     row
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MOODS: [Mood; 10] = [
+        Mood::Sleepy,
+        Mood::Bored,
+        Mood::Curious,
+        Mood::Focused,
+        Mood::Toiling,
+        Mood::Caffeinated,
+        Mood::Happy,
+        Mood::Proud,
+        Mood::Excited,
+        Mood::Confused,
+    ];
+
+    /// Frames chosen to hit the animation phases the moods key off — blink
+    /// cycles, particle rotations, and jitter parity — so the guards see every
+    /// glyph the art can produce, not just the frame-6 preview snapshot.
+    const FRAMES: [u64; 8] = [0, 1, 3, 6, 7, 12, 13, 25];
+
+    /// Every glyph must occupy exactly one terminal column: the centered face
+    /// block is composited by column index, so a wide glyph (emoji, CJK, a wide
+    /// symbol) would shove the rest of the row over and corrupt the layout.
+    /// ASCII is single-width; beyond that we allow only this curated set of
+    /// narrow box-drawing and accent glyphs. If new art needs a glyph that isn't
+    /// here, add it *after* confirming it renders in a single cell — never
+    /// silence the test by loosening the check.
+    const ALLOWED_NON_ASCII: &[char] = &[
+        // rounded corners + box drawing (bodies)
+        '─', '│', '╭', '╮', '╰', '╯', '┌', '┐', '└', '┘', '┏', '┓', '┗', '┛', '═', '║', '╔', '╗',
+        '╚', '╝', '╱', '╲', '▁', '▔', '▂', '▃', '┬', '┴', '┈', //
+        // filled / partial circles + small accents (eyes, mouths, blush, sparkle, ears)
+        '●', '•', '◦', '◕', '◔', '◑', '◐', '◠', '◡', '°', '·', '✦', '✧', '˘', '◤', '◥',
+    ];
+
+    #[test]
+    fn every_row_is_exactly_canvas_width() {
+        for &c in &Character::CAST {
+            for m in MOODS {
+                for f in FRAMES {
+                    let d = render(m, c, f);
+                    assert_eq!(d.rows.len(), 6, "{} · {:?}: expected 6 rows", c.name(), m);
+                    for (i, row) in d.rows.iter().enumerate() {
+                        let width: usize = row.iter().map(|s| s.text.chars().count()).sum();
+                        assert_eq!(
+                            width,
+                            W,
+                            "{} · {:?} frame {f}: row {i} is {width} cells, expected {W}",
+                            c.name(),
+                            m
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_glyph_is_single_width_safe() {
+        for &c in &Character::CAST {
+            for m in MOODS {
+                for f in FRAMES {
+                    let d = render(m, c, f);
+                    for row in &d.rows {
+                        for seg in row {
+                            for ch in seg.text.chars() {
+                                assert!(
+                                    ch.is_ascii() || ALLOWED_NON_ASCII.contains(&ch),
+                                    "{} · {:?} frame {f}: glyph {ch:?} (U+{:04X}) is not on the \
+                                     single-width allowlist — verify its terminal width and add it",
+                                    c.name(),
+                                    m,
+                                    ch as u32
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
