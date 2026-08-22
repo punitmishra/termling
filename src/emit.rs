@@ -50,6 +50,15 @@ impl Privacy {
 /// Entry point for `termling emit …`. Always returns `Ok(())` — a failed
 /// send is not the shell's problem.
 pub fn run(args: &[String]) -> io::Result<()> {
+    let ev = build_event(args, &Privacy::from_env());
+    crate::event::send(&ev);
+    Ok(())
+}
+
+/// Parse the `emit` flags into an [`Event`], applying `privacy` to the command
+/// text. Split out from [`run`] (which also sends) so the flag handling — the
+/// part with edge cases — is unit-testable without touching the socket.
+fn build_event(args: &[String], privacy: &Privacy) -> Event {
     let mut kind = Kind::End;
     let mut code: Option<i32> = None;
     let mut dur_ms: Option<u64> = None;
@@ -77,8 +86,8 @@ pub fn run(args: &[String]) -> io::Result<()> {
         }
     }
 
-    let cmd = Privacy::from_env().apply(cmd);
-    let ev = match kind {
+    let cmd = privacy.apply(cmd);
+    match kind {
         Kind::Start => {
             // A `start` carries where and which shell it came from, so the
             // companion can slot it into the right roster entry immediately.
@@ -97,9 +106,7 @@ pub fn run(args: &[String]) -> io::Result<()> {
             ev.cmd = cmd;
             ev
         }
-    };
-    crate::event::send(&ev);
-    Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -133,5 +140,69 @@ mod tests {
             Privacy::Full.apply(Some("echo hi there".into())),
             Some("echo hi there".into())
         );
+    }
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn build_event_parses_a_start() {
+        let ev = build_event(
+            &args(&[
+                "--type", "start", "--cmd", "git push", "--pwd", "/tmp", "--shell", "%1",
+            ]),
+            &Privacy::Full,
+        );
+        assert_eq!(ev.kind, Kind::Start);
+        assert_eq!(ev.cmd.as_deref(), Some("git push"));
+        assert_eq!(ev.pwd.as_deref(), Some("/tmp"));
+        assert_eq!(ev.shell.as_deref(), Some("%1"));
+        // A start has no exit code.
+        assert_eq!(ev.code, None);
+    }
+
+    #[test]
+    fn build_event_defaults_end_code_to_zero() {
+        // No --type ⇒ End; no --code ⇒ 0 (an `end` always carries a code).
+        let ev = build_event(&args(&["--dur", "1500", "--pwd", "/x"]), &Privacy::Name);
+        assert_eq!(ev.kind, Kind::End);
+        assert_eq!(ev.code, Some(0));
+        assert_eq!(ev.dur_ms, Some(1500));
+    }
+
+    #[test]
+    fn build_event_applies_privacy_to_the_command() {
+        let ev = build_event(
+            &args(&["--type", "start", "--cmd", "psql -U admin topsecret"]),
+            &Privacy::Name,
+        );
+        // Only the program name leaves the shell under the default policy.
+        assert_eq!(ev.cmd.as_deref(), Some("psql"));
+    }
+
+    #[test]
+    fn build_event_ignores_unparseable_numbers() {
+        let ev = build_event(
+            &args(&["--type", "end", "--code", "NaN", "--dur", "soon"]),
+            &Privacy::Name,
+        );
+        // A junk --code falls back to the 0 default; a junk --dur stays absent.
+        assert_eq!(ev.code, Some(0));
+        assert_eq!(ev.dur_ms, None);
+    }
+
+    #[test]
+    fn event_round_trips_a_multiline_command() {
+        // Shells can produce a newline inside a command; the wire format must
+        // carry it intact (only a literal \x1f — which shells never emit — would
+        // confuse the field split).
+        let ev = build_event(
+            &args(&["--type", "start", "--cmd", "echo one\ntwo"]),
+            &Privacy::Full,
+        );
+        let decoded = crate::event::Event::decode(&ev.encode()).unwrap();
+        assert_eq!(decoded, ev);
+        assert_eq!(decoded.cmd.as_deref(), Some("echo one\ntwo"));
     }
 }

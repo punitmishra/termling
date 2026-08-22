@@ -59,8 +59,10 @@ below):
 > cargo install --git https://github.com/punitmishra/termling
 > ```
 >
-> That puts `termling` on your `PATH` (in `~/.cargo/bin`) and, bonus, lets
-> `termling update` keep you current via `cargo install --force`.
+> That puts `termling` on your `PATH` (in `~/.cargo/bin`). To update a `--git`
+> install later, re-run that same command — cargo won't refresh it on its own.
+> (`termling update` targets the crates.io release, which doesn't exist until
+> the first tag is cut.)
 
 **One-line installer** (macOS & Linux, no sudo — installs to `~/.local/bin`):
 
@@ -168,7 +170,7 @@ cargo run -- --preview
 
 ```sh
 termling update            # upgrade in place
-termling update --check    # just report whether a newer version exists
+termling update --check    # show installed version; check for newer where it can
 termling version           # print the installed version
 ```
 
@@ -177,7 +179,10 @@ termling` for a Homebrew install, `cargo install termling --force` for a Cargo
 install, or prints the one-line installer for a manual/tarball install. **The
 binary makes no network calls of its own** and never checks for updates in the
 background; it only shells out to `brew`/`cargo` (which do their own fetching)
-at the moment you run the command.
+at the moment you run the command. `update --check` follows the same routing:
+for Homebrew it runs `brew outdated termling` (which reports if a newer one
+exists); for Cargo or a manual install — where the network-free binary can't
+know — it simply points you at crates.io or the Releases page.
 
 ## How the link works
 
@@ -211,10 +216,13 @@ the companion:
 3. inside **iTerm2** → the iTerm *window*.
 4. otherwise → `default`.
 
-kitty and WezTerm have no per-window case yet, so shells there land on the
-`default` scope — a *single shared companion* per terminal app (the roster still
-lists each shell). Per-window scoping for them is a documented follow-up; set
-`TERMLING_SCOPE` yourself if you want one companion per window today.
+kitty and WezTerm have no per-window case yet, so shells there fall through to
+`default` — as does any terminal that isn't tmux or iTerm2 (Terminal.app, most
+Linux terminals). Everything on `default` shares **one** companion (the roster
+still lists each shell): two kitty windows — or a kitty window and a WezTerm
+window, or a plain Terminal.app shell — get one shared creature, not one each.
+Per-window scoping is a documented follow-up; set `TERMLING_SCOPE` yourself if
+you want a separate companion per window today.
 
 Auto-spawn uses a dependency-free single-instance guard: the companion's socket
 `bind` *is* the lock (creating the socket file is atomic), so if two shells start
@@ -303,13 +311,17 @@ Honest about what it is — a fun, small, **local** toy:
 - **zsh, bash, and fish.** zsh and fish use native command-lifecycle hooks with
   sub-second timing; bash has no native `preexec`, so it's emulated with a
   `DEBUG` trap + `PROMPT_COMMAND` and its command duration is **second-resolution**
-  (enough for the long-command flair). Other shells (PowerShell, nushell, …)
-  aren't wired up yet — contributions welcome (see **Contributing**).
+  (enough for the long-command flair). bash allows only one `DEBUG` trap, so if
+  you also use bash-preexec or starship's bash hook, **load termling last**; and
+  on a compound line `$PIPESTATUS` is reset between commands (a limitation shared
+  by every `DEBUG`-trap hook). Other shells (PowerShell, nushell, …) aren't wired
+  up yet — contributions welcome (see **Contributing**).
 - **Auto-spawn is tmux / iTerm2 / kitty / WezTerm.** kitty needs remote control
   enabled (`allow_remote_control yes`). Everywhere else (Terminal.app, most Linux
   terminals) set `TERMLING_AUTOSPAWN=0` and open the pane yourself with
   `termling tmux`, a zellij layout, or a plain second window. kitty and WezTerm
-  share one companion per terminal app (see **Scopes**).
+  (and any non-tmux/non-iTerm2 terminal) fall on the shared `default` scope —
+  one companion between them, not one each (see **Scopes**).
 - **Needs a modern terminal** — Unicode glyphs and 24-bit truecolor, plus a pane
   at least ~22 columns wide; in a 256-color or ASCII-only terminal the art
   degrades.
@@ -421,7 +433,8 @@ RNG, and themes are all hand-rolled to keep it lightweight.
 
 ## Roadmap
 
-Per-window scoping for kitty & WezTerm (one companion per window, not per app);
+Per-window scoping for kitty & WezTerm (a companion per window, rather than the
+one they currently share on the `default` scope);
 sub-second bash duration where a modern bash is available; more shells
 (PowerShell, nushell); per-command mood nuance; and a `zsh/net/socket`
 zero-spawn emit path.

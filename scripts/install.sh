@@ -10,7 +10,6 @@ set -eu
 
 REPO="punitmishra/termling"
 BIN="termling"
-INSTALL_DIR="${TERMLING_INSTALL_DIR:-$HOME/.local/bin}"
 
 err() {
 	printf 'termling install: %s\n' "$1" >&2
@@ -23,6 +22,17 @@ need() {
 
 need curl
 need tar
+
+# Resolve the install dir: an explicit override, else ~/.local/bin. Guard $HOME
+# so that if it's unset (e.g. a bare cron/CI env) we say so, rather than die with
+# an opaque "HOME: unbound variable" from `set -u`.
+if [ -n "${TERMLING_INSTALL_DIR:-}" ]; then
+	INSTALL_DIR="$TERMLING_INSTALL_DIR"
+elif [ -n "${HOME:-}" ]; then
+	INSTALL_DIR="$HOME/.local/bin"
+else
+	err "\$HOME is not set — set TERMLING_INSTALL_DIR to choose where to install"
+fi
 
 # --- target triple from OS + arch ------------------------------------------
 os="$(uname -s)"
@@ -94,7 +104,7 @@ expected="$(cut -d' ' -f1 "$tmp/$archive.sha256")"
 		printf '%s\n' "$line" | sha256sum -c - >/dev/null 2>&1 ||
 			err "checksum mismatch — refusing to install"
 	else
-		printf 'termling: no shasum/sha256sum found — skipping checksum verify\n' >&2
+		err "no shasum or sha256sum found — cannot verify the download, refusing to install (try: cargo install $BIN)"
 	fi
 )
 

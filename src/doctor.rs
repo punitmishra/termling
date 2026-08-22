@@ -3,7 +3,9 @@
 //! reuses the same scope/socket/liveness logic the real companion uses, so what
 //! it reports is exactly what `ensure`/`tmux` see.
 
+use std::ffi::OsStr;
 use std::io;
+use std::path::Path;
 
 use crate::event;
 
@@ -42,19 +44,31 @@ fn autospawn_support(e: &EnvView) -> Option<&'static str> {
     }
 }
 
-/// Is the running binary's directory on `$PATH` (so the hook's bare `termling`
-/// resolves)?
+/// Is the running binary reachable by name through `$PATH` (so the hook's bare
+/// `termling` resolves to it)?
 fn on_path() -> bool {
     let Ok(exe) = std::env::current_exe() else {
         return false;
     };
-    let Some(dir) = exe.parent() else {
+    let Some(name) = exe.file_name() else {
         return false;
     };
-    match std::env::var_os("PATH") {
-        Some(path) => std::env::split_paths(&path).any(|p| p == dir),
-        None => false,
-    }
+    resolves_on_path(&exe, std::env::var_os("PATH").as_deref(), name)
+}
+
+/// Pure core of [`on_path`]: does some `$PATH` entry hold a file named
+/// `file_name` that resolves to the same binary as `exe`? We compare the
+/// *canonical* paths, so a symlinked install — e.g. Homebrew's `bin` dir
+/// linking into `Cellar` — still counts. A plain "is the parent dir literally
+/// in PATH" check misses that and reports a false "not on PATH" (findings
+/// #9/#16), which bites Linux/brew users specifically.
+fn resolves_on_path(exe: &Path, path_var: Option<&OsStr>, file_name: &OsStr) -> bool {
+    let Some(path) = path_var else {
+        return false;
+    };
+    let target = std::fs::canonicalize(exe).unwrap_or_else(|_| exe.to_path_buf());
+    std::env::split_paths(path)
+        .any(|dir| std::fs::canonicalize(dir.join(file_name)).is_ok_and(|real| real == target))
 }
 
 fn check(ok: bool, yes: &str, no: &str) {
@@ -83,6 +97,11 @@ pub fn run() -> io::Result<()> {
     );
 
     match autospawn_support(&EnvView::from_env()) {
+        // kitty splits only work when its remote-control socket is on; say so
+        // rather than promise a spawn that may silently no-op (finding #12).
+        Some("kitty") => println!(
+            "  ✓ auto-spawn supported via kitty (requires `allow_remote_control yes` in kitty.conf)"
+        ),
         Some(term) => println!("  ✓ auto-spawn supported via {term}"),
         None => println!(
             "  ✗ no split-capable terminal detected — open a second pane and run \
@@ -109,9 +128,11 @@ pub fn run() -> io::Result<()> {
     println!();
     println!("hook — add this to your shell rc, then open a new window:");
     let line = match crate::init::detect_shell() {
-        "fish" => "termling init fish | source",
-        "bash" => "eval \"$(termling init bash)\"",
-        _ => "eval \"$(termling init zsh)\"",
+        Some("fish") => "termling init fish | source",
+        Some("bash") => "eval \"$(termling init bash)\"",
+        Some("zsh") => "eval \"$(termling init zsh)\"",
+        // $SHELL isn't one we recognize — show the form and let them pick.
+        _ => "eval \"$(termling init zsh)\"   # or: bash | fish",
     };
     println!("  {line}");
     println!("(the hook can't be inspected from here — after installing, run any");
@@ -152,5 +173,49 @@ mod tests {
             Some("WezTerm")
         );
         assert_eq!(autospawn_support(&view(false, false, false, false)), None);
+    }
+
+    #[test]
+    fn resolves_on_path_matches_the_running_binary() {
+        // The test binary genuinely exists; a PATH containing its own dir must
+        // resolve to it, and a PATH without it must not.
+        let exe = std::env::current_exe().unwrap();
+        let dir = exe.parent().unwrap();
+        let name = exe.file_name().unwrap();
+
+        let has = std::env::join_paths([dir, Path::new("/no/such/dir")]).unwrap();
+        assert!(resolves_on_path(&exe, Some(has.as_os_str()), name));
+
+        let missing = std::env::join_paths([Path::new("/no/such/dir")]).unwrap();
+        assert!(!resolves_on_path(&exe, Some(missing.as_os_str()), name));
+        assert!(!resolves_on_path(&exe, None, name));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolves_on_path_follows_a_symlinked_install() {
+        use std::os::unix::fs::symlink;
+
+        // Model a Homebrew-style layout: the real binary lives in a Cellar dir,
+        // and the dir that's actually on PATH holds a symlink to it. A lexical
+        // dir compare would miss this; resolving the link makes it match.
+        let base = std::env::temp_dir().join(format!("termling-doctor-{}", std::process::id()));
+        let cellar = base.join("Cellar/bin");
+        let bindir = base.join("bin");
+        std::fs::create_dir_all(&cellar).unwrap();
+        std::fs::create_dir_all(&bindir).unwrap();
+
+        let real = cellar.join("termling");
+        std::fs::write(&real, b"#!/bin/sh\n").unwrap();
+        symlink(&real, bindir.join("termling")).unwrap();
+
+        let name = OsStr::new("termling");
+        let on = std::env::join_paths([&bindir]).unwrap();
+        assert!(resolves_on_path(&real, Some(on.as_os_str()), name));
+
+        let off = std::env::join_paths([base.join("nope")]).unwrap();
+        assert!(!resolves_on_path(&real, Some(off.as_os_str()), name));
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
