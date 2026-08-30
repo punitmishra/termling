@@ -11,6 +11,7 @@ use ratatui::{
 };
 
 use crate::app::{App, Flair, Mode};
+use crate::buddy::{Quip, Tone};
 use crate::doodle;
 use crate::games::{GameKind, ItemColors};
 
@@ -35,7 +36,12 @@ fn draw_doodle(f: &mut Frame, app: &App, area: Rect) {
         .title(format!(" {} · {} ", d.name, mood.label()))
         .border_style(Style::default().fg(d.border_color));
 
-    let mut lines: Vec<Line> = vec![Line::raw("")];
+    // The buddy's speech bubble floats just above the creature. When it has
+    // nothing to say, a single blank line keeps the layout from jumping.
+    let mut lines: Vec<Line> = match app.speech() {
+        Some(quip) => speech_bubble(quip, &theme),
+        None => vec![Line::raw("")],
+    };
     for row in &d.rows {
         let spans: Vec<Span> = row
             .iter()
@@ -68,6 +74,14 @@ fn draw_doodle(f: &mut Frame, app: &App, area: Rect) {
         format!("streak {}  ·  best {}", app.streak(), app.best_streak()),
         Style::default().fg(theme.dim),
     ));
+    // What the buddy brain has picked up — a quiet sign it's learning your tools.
+    let learned = app.buddy().known_tools();
+    if learned > 0 {
+        lines.push(Line::styled(
+            format!("buddy knows {} tool{}", learned, if learned == 1 { "" } else { "s" }),
+            Style::default().fg(theme.dim),
+        ));
+    }
 
     // A brief celebratory flourish (level-up, streak milestone, long job done).
     if let Some(flair) = app.flair() {
@@ -140,6 +154,36 @@ fn draw_doodle(f: &mut Frame, app: &App, area: Rect) {
         .block(block)
         .alignment(Alignment::Center);
     f.render_widget(para, area);
+}
+
+/// Build the buddy's speech bubble: a rounded box holding one short line, tinted
+/// by the quip's tone, with a little tail pointing down at the creature. Returned
+/// as ready-to-render centered lines.
+fn speech_bubble(quip: &Quip, theme: &crate::theme::Theme) -> Vec<Line<'static>> {
+    let color = tone_color(quip.tone, theme);
+    let style = Style::default().fg(color);
+    // Cap the width so a long quip never blows out the pane; the buddy's lines are
+    // written short, but this keeps us honest.
+    let text = truncate(&quip.text, 30);
+    let inner = text.chars().count();
+    let bar: String = "─".repeat(inner + 2);
+
+    vec![
+        Line::styled(format!("╭{bar}╮"), style),
+        Line::styled(format!("│ {text} │"), style),
+        Line::styled(format!("╰{bar}╯"), style),
+        Line::styled("▾", style),
+    ]
+}
+
+/// Map a quip's tone to a palette entry.
+fn tone_color(tone: Tone, theme: &crate::theme::Theme) -> Color {
+    match tone {
+        Tone::Cheer => theme.good,
+        Tone::Worry => theme.bad,
+        Tone::Insight => theme.gem,
+        Tone::Neutral => theme.accent,
+    }
 }
 
 /// The banner text + color for an active celebratory flourish.

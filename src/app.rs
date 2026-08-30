@@ -8,6 +8,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::buddy::{Buddy, Quip};
 use crate::doodle::Character;
 use crate::event::{Event, Kind};
 use crate::games::{GameKind, Input, MiniGame};
@@ -113,6 +114,12 @@ pub struct App {
     // --- transient celebration ---
     /// An active flourish and how many frames it has left.
     flair: Option<(Flair, u32)>,
+
+    // --- the buddy brain ---
+    /// The local learner that watches your commands and talks back.
+    buddy: Buddy,
+    /// The current speech-bubble line and how many frames it has left.
+    speech: Option<(Quip, u32)>,
 }
 
 /// How many recent commands the ambient feed remembers.
@@ -142,6 +149,8 @@ impl App {
             cwd: None,
             project_theme: matches!(std::env::var("TERMLING_PROJECT_THEME").as_deref(), Ok("1")),
             flair: None,
+            buddy: Buddy::load(),
+            speech: None,
         }
     }
 
@@ -150,6 +159,9 @@ impl App {
     /// Fold a real-shell event into the mood signals, XP, roster, and feed.
     pub fn apply_event(&mut self, ev: Event) {
         self.idle_ticks = 0;
+        // Snapshot what the buddy brain needs before `ev` is consumed below.
+        let (b_kind, b_cmd, b_code, b_dur, b_frame) =
+            (ev.kind, ev.cmd.clone(), ev.code.unwrap_or(0), ev.dur_ms, self.frame);
         let id = ev.shell.clone().unwrap_or_else(|| "shell".to_string());
         if let Some(pwd) = ev.pwd.clone() {
             self.set_cwd(pwd);
@@ -210,6 +222,17 @@ impl App {
                     self.celebrate_long();
                 }
             }
+        }
+
+        // Let the buddy brain learn from and react to this event. A `start` may
+        // greet a new tool or predict; an `end` folds the outcome into the model
+        // and reacts. Either can raise a fresh speech bubble.
+        let quip = match b_kind {
+            Kind::Start => self.buddy.on_start(b_cmd.as_deref(), b_frame),
+            Kind::End => self.buddy.on_end(b_cmd.as_deref(), b_code, b_dur, b_frame),
+        };
+        if let Some(q) = quip {
+            self.speech = Some((q, SPEECH_TICKS));
         }
     }
 
@@ -329,6 +352,16 @@ impl App {
         self.flair.map(|(f, _)| f)
     }
 
+    /// What the buddy is currently saying, if anything.
+    pub fn speech(&self) -> Option<&Quip> {
+        self.speech.as_ref().map(|(q, _)| q)
+    }
+
+    /// The buddy brain, for read-only introspection by the UI (learned tools, …).
+    pub fn buddy(&self) -> &Buddy {
+        &self.buddy
+    }
+
     /// Persist XP + best streak. Called on quit.
     pub fn save(&self) {
         save_state(self.xp, self.best_streak);
@@ -437,6 +470,13 @@ impl App {
                 self.flair = None;
             }
         }
+        // The speech bubble fades on the same clock, and regardless of mode.
+        if let Some((_, n)) = &mut self.speech {
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                self.speech = None;
+            }
+        }
         match self.mode {
             Mode::Game => {
                 if let Some(g) = &mut self.game {
@@ -508,6 +548,9 @@ const BURST_CAP: u32 = 15;
 const LONG_RUN_TICKS: u32 = 40;
 /// How many frames a celebratory flourish stays on screen (~2s at ~10fps).
 const FLAIR_TICKS: u32 = 20;
+/// How many frames a buddy speech bubble lingers before fading (~4.5s at ~10fps),
+/// long enough to read a short line without lagging behind rapid commands.
+const SPEECH_TICKS: u32 = 45;
 /// Frames without a peep before a shell is pruned from the roster (~60s).
 const STALE_TICKS: u64 = 600;
 
@@ -665,6 +708,25 @@ mod tests {
             app.step();
         }
         assert!(app.flair().is_none());
+    }
+
+    #[test]
+    fn a_command_makes_the_buddy_speak_then_the_bubble_fades() {
+        let mut app = App::new();
+        // A never-seen tool starting should raise a greeting bubble.
+        app.apply_event(Event::start(Some("cargo build".into())));
+        assert!(app.speech().is_some());
+        // It fades on its own after its lifetime, like the flair.
+        for _ in 0..(SPEECH_TICKS + 1) {
+            app.step();
+        }
+        assert!(app.speech().is_none());
+        // And the buddy learns the tool when the run ends (emit carries `cmd` on
+        // `end`, which is where the outcome — and thus the learning — happens).
+        let mut done = Event::end(0);
+        done.cmd = Some("cargo build".into());
+        app.apply_event(done);
+        assert!(app.buddy().known_tools() >= 1);
     }
 
     #[test]
