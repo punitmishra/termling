@@ -160,8 +160,13 @@ impl App {
     pub fn apply_event(&mut self, ev: Event) {
         self.idle_ticks = 0;
         // Snapshot what the buddy brain needs before `ev` is consumed below.
-        let (b_kind, b_cmd, b_code, b_dur, b_frame) =
-            (ev.kind, ev.cmd.clone(), ev.code.unwrap_or(0), ev.dur_ms, self.frame);
+        let (b_kind, b_cmd, b_code, b_dur, b_frame) = (
+            ev.kind,
+            ev.cmd.clone(),
+            ev.code.unwrap_or(0),
+            ev.dur_ms,
+            self.frame,
+        );
         let id = ev.shell.clone().unwrap_or_else(|| "shell".to_string());
         if let Some(pwd) = ev.pwd.clone() {
             self.set_cwd(pwd);

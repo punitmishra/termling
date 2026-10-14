@@ -117,7 +117,11 @@ impl Buddy {
             total: 0,
             path,
         };
-        if let Some(text) = b.path.as_ref().and_then(|p| std::fs::read_to_string(p).ok()) {
+        if let Some(text) = b
+            .path
+            .as_ref()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+        {
             b.parse(&text);
         }
         b
@@ -219,7 +223,13 @@ impl Buddy {
 
     /// Pick something to say about a finished command. Learning has already run,
     /// so `self.habits[tool]` reflects this run too.
-    fn react(&self, tool: Option<&str>, code: i32, dur_ms: Option<u64>, nonce: u64) -> Option<Quip> {
+    fn react(
+        &self,
+        tool: Option<&str>,
+        code: i32,
+        dur_ms: Option<u64>,
+        nonce: u64,
+    ) -> Option<Quip> {
         let Some(tool) = tool else {
             // No command text (privacy=none): still acknowledge the outcome.
             return Some(if code == 0 {
@@ -232,15 +242,19 @@ impl Buddy {
         if code != 0 {
             // A gentle, personalized nudge on failure. If this tool trips you up
             // more often than not, the buddy commiserates instead of cheerleading.
-            let often_tricky = self.habits.get(tool).is_some_and(|h| {
-                h.runs >= 4 && h.success_rate().is_some_and(|r| r < 0.5)
-            });
+            let often_tricky = self
+                .habits
+                .get(tool)
+                .is_some_and(|h| h.runs >= 4 && h.success_rate().is_some_and(|r| r < 0.5));
             let tail = if often_tricky {
                 "a tricky one for you"
             } else {
                 pick(&FAIL_TAIL, nonce)
             };
-            return Some(Quip::new(Tone::Worry, format!("`{tool}` hit exit {code} — {tail}")));
+            return Some(Quip::new(
+                Tone::Worry,
+                format!("`{tool}` hit exit {code} — {tail}"),
+            ));
         }
 
         // Success. Prefer a *learned* remark when we have one, else a cheer.
@@ -256,7 +270,10 @@ impl Buddy {
                 ));
             }
         }
-        Some(Quip::new(Tone::Cheer, format!("`{tool}` {}", pick(&OK_TAIL, nonce))))
+        Some(Quip::new(
+            Tone::Cheer,
+            format!("`{tool}` {}", pick(&OK_TAIL, nonce)),
+        ))
     }
 
     /// A remark comparing this run's duration to the tool's typical time, when the
@@ -311,8 +328,11 @@ impl Buddy {
         if self.habits.len() <= MAX_TOOLS {
             return;
         }
-        let mut by_use: Vec<(String, u32)> =
-            self.habits.iter().map(|(k, h)| (k.clone(), h.runs)).collect();
+        let mut by_use: Vec<(String, u32)> = self
+            .habits
+            .iter()
+            .map(|(k, h)| (k.clone(), h.runs))
+            .collect();
         by_use.sort_by_key(|(_, runs)| *runs);
         let drop_n = self.habits.len() - MAX_TOOLS;
         let doomed: Vec<String> = by_use.into_iter().take(drop_n).map(|(k, _)| k).collect();
@@ -398,8 +418,11 @@ fn prune_successors(succ: &mut BTreeMap<String, u32>) {
     }
     let mut edges: Vec<(String, u32)> = succ.iter().map(|(k, v)| (k.clone(), *v)).collect();
     edges.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
-    let keep: std::collections::BTreeSet<String> =
-        edges.into_iter().take(MAX_SUCCESSORS).map(|(k, _)| k).collect();
+    let keep: std::collections::BTreeSet<String> = edges
+        .into_iter()
+        .take(MAX_SUCCESSORS)
+        .map(|(k, _)| k)
+        .collect();
     succ.retain(|k, _| keep.contains(k));
 }
 
@@ -434,7 +457,11 @@ const FAIL_TAIL: [&str; 4] = [
     "try again?",
 ];
 const GENERIC_OK: [&str; 3] = ["clean run ✓", "nice ✓", "that worked ✓"];
-const GENERIC_FAIL: [&str; 3] = ["that one stumbled", "hmm, nonzero exit", "not quite — retry?"];
+const GENERIC_FAIL: [&str; 3] = [
+    "that one stumbled",
+    "hmm, nonzero exit",
+    "not quite — retry?",
+];
 
 /// `${XDG_STATE_HOME:-~/.local/state}/termling/buddy` — beside the XP state file.
 fn state_path() -> Option<PathBuf> {
@@ -499,7 +526,9 @@ mod tests {
             b.on_end(Some("cargo"), 0, None, i * 2);
             b.on_end(Some("git"), 0, None, i * 2 + 1);
         }
-        let (succ, conf) = b.prediction_from("cargo").expect("should predict from cargo");
+        let (succ, conf) = b
+            .prediction_from("cargo")
+            .expect("should predict from cargo");
         assert_eq!(succ, "git");
         assert!(conf >= PREDICT_CONFIDENCE);
     }

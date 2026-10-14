@@ -78,7 +78,11 @@ fn draw_doodle(f: &mut Frame, app: &App, area: Rect) {
     let learned = app.buddy().known_tools();
     if learned > 0 {
         lines.push(Line::styled(
-            format!("buddy knows {} tool{}", learned, if learned == 1 { "" } else { "s" }),
+            format!(
+                "buddy knows {} tool{}",
+                learned,
+                if learned == 1 { "" } else { "s" }
+            ),
             Style::default().fg(theme.dim),
         ));
     }
