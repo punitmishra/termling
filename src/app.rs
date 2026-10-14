@@ -234,7 +234,19 @@ impl App {
         // and reacts. Either can raise a fresh speech bubble.
         let quip = match b_kind {
             Kind::Start => self.buddy.on_start(b_cmd.as_deref(), b_frame),
-            Kind::End => self.buddy.on_end(b_cmd.as_deref(), b_code, b_dur, b_frame),
+            Kind::End => {
+                // The shell hooks send the command text only on `start`; an `end`
+                // carries just the exit code and duration. Fall back to the
+                // command this shell started (the roster stashed it as `last_cmd`)
+                // so the buddy can actually learn the tool and its outcome.
+                let cmd = b_cmd.or_else(|| {
+                    self.roster
+                        .iter()
+                        .find(|s| s.id == id)
+                        .and_then(|s| s.last_cmd.clone())
+                });
+                self.buddy.on_end(cmd.as_deref(), b_code, b_dur, b_frame)
+            }
         };
         if let Some(q) = quip {
             self.speech = Some((q, SPEECH_TICKS));
@@ -732,6 +744,17 @@ mod tests {
         done.cmd = Some("cargo build".into());
         app.apply_event(done);
         assert!(app.buddy().known_tools() >= 1);
+    }
+
+    #[test]
+    fn the_buddy_learns_when_end_events_omit_the_command() {
+        // The real shell hooks emit `--cmd` only on `start`; an `end` carries just
+        // the exit code and duration. The buddy must still learn the tool by
+        // pairing the end with the command this shell started.
+        let mut app = App::new();
+        app.apply_event(Event::start(Some("cargo build".into())));
+        app.apply_event(Event::end(0)); // no cmd, exactly as the hooks emit
+        assert_eq!(app.buddy().known_tools(), 1);
     }
 
     #[test]
