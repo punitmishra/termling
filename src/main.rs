@@ -12,6 +12,7 @@
 //! no args runs the companion.
 
 mod app;
+mod buddy;
 mod demo;
 mod doctor;
 mod doodle;
