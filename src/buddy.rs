@@ -83,8 +83,6 @@ pub struct Buddy {
     next: BTreeMap<String, BTreeMap<String, u32>>,
     /// The last tool that *finished*, to draw the next bigram edge from.
     last_tool: Option<String>,
-    /// Total commands folded, across the whole history.
-    total: u32,
     /// Where state persists (None only in tests that opt out of disk).
     path: Option<PathBuf>,
 }
@@ -114,7 +112,6 @@ impl Buddy {
             habits: BTreeMap::new(),
             next: BTreeMap::new(),
             last_tool: None,
-            total: 0,
             path,
         };
         if let Some(text) = b
@@ -134,7 +131,6 @@ impl Buddy {
             habits: BTreeMap::new(),
             next: BTreeMap::new(),
             last_tool: None,
-            total: 0,
             path: None,
         }
     }
@@ -187,7 +183,6 @@ impl Buddy {
         if let Some(tool) = &tool {
             self.learn(tool, code, dur_ms);
         }
-        self.total = self.total.saturating_add(1);
 
         let quip = self.react(tool.as_deref(), code, dur_ms, nonce);
 
