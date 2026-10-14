@@ -166,12 +166,12 @@ fn draw_doodle(f: &mut Frame, app: &App, area: Rect) {
 fn speech_bubble(quip: &Quip, theme: &crate::theme::Theme) -> Vec<Line<'static>> {
     let color = tone_color(quip.tone, theme);
     let style = Style::default().fg(color);
-    // Cap the width so a long quip never blows out the pane; the buddy's lines are
-    // written short, but this keeps us honest.
-    let text = truncate(&quip.text, 30);
-    // Size the border by *display* width, not code points: the buddy's quips carry
-    // emoji (🔮 👀 ⚡) that occupy two terminal cells, so counting chars would make
-    // the right edge fall short of the content line it's supposed to box.
+    // Cap the width so a long quip never blows out the pane. Measured in display
+    // *cells*, not code points, so a wide/emoji-heavy quip can't still overflow.
+    let text = clip_to_cells(&quip.text, 30);
+    // Size the border by display width too: the buddy's quips carry emoji (🔮 👀 ⚡)
+    // and tool names may hold wide/CJK glyphs, all of which occupy two terminal
+    // cells — counting chars would leave the right edge short of the content box.
     let inner = display_width(&text);
     let bar: String = "─".repeat(inner + 2);
 
@@ -183,26 +183,79 @@ fn speech_bubble(quip: &Quip, theme: &crate::theme::Theme) -> Vec<Line<'static>>
     ]
 }
 
-/// A pragmatic terminal display width for the buddy's quip glyphs. We don't ship a
-/// full Unicode-width table (that would mean a new dependency, against the crate's
-/// zero-dep ethos); this covers what the buddy actually renders: emoji in the
-/// supplementary plane and the `⚡` symbol take two cells, zero-width joiners and
-/// variation selectors take none, everything else (ASCII, box-drawing, `✓`) one.
-/// It matches what ratatui's own width calc does for these glyphs, so the boxed
+/// A pragmatic terminal display width in cells. We don't pull in a full
+/// Unicode-width table as a dependency (against the crate's zero-dep ethos); this
+/// hand-rolled version covers every glyph that can reach the speech bubble — the
+/// buddy's own emoji plus arbitrary (possibly non-English) tool names — and
+/// matches what ratatui's layout (unicode-width) does for them, so the boxed
 /// border and the centered content line come out the same width.
+///
+/// Width 2: East-Asian wide / fullwidth blocks (CJK, kana, Hangul, …) and the
+/// emoji / emoji-presentation symbol blocks. Width 0: zero-width joiners,
+/// variation selectors, and combining marks. Everything else is 1. The only
+/// snag is that the symbol blocks mix emoji-presentation glyphs (two cells, e.g.
+/// ✅ ❌ ⭐ ⚡) with a few text-presentation ones; the buddy renders exactly one of
+/// the latter — `✓` — so it's listed as a one-cell exception.
 fn display_width(s: &str) -> usize {
-    s.chars()
-        .map(|c| {
-            let cp = c as u32;
-            if cp == 0x200D || (0xFE00..=0xFE0F).contains(&cp) {
-                0
-            } else if cp >= 0x1F000 || cp == 0x26A1 {
-                2
-            } else {
-                1
-            }
-        })
-        .sum()
+    s.chars().map(char_cells).sum()
+}
+
+fn char_cells(c: char) -> usize {
+    let cp = c as u32;
+    // Zero-width: joiners, variation selectors, combining marks.
+    if cp == 0x200D || (0xFE00..=0xFE0F).contains(&cp) || (0x0300..=0x036F).contains(&cp) {
+        return 0;
+    }
+    // Text-presentation symbols the buddy uses that sit inside the "wide" symbol
+    // blocks below but render as a single cell. `✓` (U+2713) is the only one.
+    if cp == 0x2713 {
+        return 1;
+    }
+    // Blocks that render two cells wide.
+    const WIDE: &[(u32, u32)] = &[
+        (0x1100, 0x115F),   // Hangul Jamo
+        (0x2600, 0x27BF),   // Misc symbols + Dingbats (⚡ ✅ ❌ …)
+        (0x2B00, 0x2BFF),   // Misc symbols & arrows (⭐ …)
+        (0x2E80, 0x303E),   // CJK radicals … Kangxi
+        (0x3041, 0x33FF),   // kana … CJK compatibility
+        (0x3400, 0x4DBF),   // CJK Unified Ext A
+        (0x4E00, 0x9FFF),   // CJK Unified
+        (0xA000, 0xA4CF),   // Yi
+        (0xAC00, 0xD7A3),   // Hangul syllables
+        (0xF900, 0xFAFF),   // CJK compatibility ideographs
+        (0xFE30, 0xFE4F),   // CJK compatibility forms
+        (0xFF00, 0xFF60),   // fullwidth forms
+        (0xFFE0, 0xFFE6),   // fullwidth signs
+        (0x1F000, 0x1FAFF), // emoji (supplementary plane)
+        (0x20000, 0x3FFFD), // CJK Unified Ext B and beyond
+    ];
+    if WIDE.iter().any(|(lo, hi)| cp >= *lo && cp <= *hi) {
+        return 2;
+    }
+    1
+}
+
+/// Clip `s` to at most `max` display *cells* (not code points), appending `…` when
+/// it overflows. Mirrors [`truncate`] but respects wide glyphs so the result can't
+/// exceed the pane.
+fn clip_to_cells(s: &str, max: usize) -> String {
+    if display_width(s) <= max {
+        return s.to_string();
+    }
+    // Leave a cell for the ellipsis.
+    let budget = max.saturating_sub(1);
+    let mut out = String::new();
+    let mut used = 0;
+    for c in s.chars() {
+        let w = char_cells(c);
+        if used + w > budget {
+            break;
+        }
+        out.push(c);
+        used += w;
+    }
+    out.push('…');
+    out
 }
 
 /// Map a quip's tone to a palette entry.
@@ -418,15 +471,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn display_width_counts_emoji_as_two_cells() {
-        // ASCII and box-drawing: one cell each.
+    fn display_width_matches_terminal_cells() {
+        // ASCII stays one cell each.
         assert_eq!(display_width("cargo"), 5);
-        assert_eq!(display_width("✓ nice"), 6); // ✓ is a one-cell check mark
-                                                // The buddy's wide emoji take two cells each.
+        // `✓` is a one-cell (text-presentation) check mark despite sitting in the
+        // symbol block; emoji-presentation symbols in the same block are two cells.
+        assert_eq!(display_width("✓ nice"), 6);
+        assert_eq!(display_width("⚡"), 2);
+        assert_eq!(display_width("✅"), 2);
+        assert_eq!(display_width("⭐"), 2);
+        assert_eq!(display_width("❌"), 2);
+        // Supplementary-plane emoji the buddy uses.
         assert_eq!(display_width("🔮"), 2);
         assert_eq!(display_width("👀"), 2);
-        assert_eq!(display_width("⚡"), 2);
-        // A realistic quip: "`cargo` ✓" is 9 cells; adding a 2-cell emoji adds 2.
+        // East-Asian wide / CJK tool names count as two cells each (review finding
+        // #1): `文档` is four cells, not two.
+        assert_eq!(display_width("文档"), 4);
+        assert_eq!(display_width("かな"), 4);
+        // A realistic quip: adding a 2-cell emoji adds exactly 2.
         assert_eq!(display_width("`docker` 👀"), display_width("`docker` ") + 2);
+    }
+
+    #[test]
+    fn clip_to_cells_respects_wide_glyphs() {
+        // Short input is returned unchanged.
+        assert_eq!(clip_to_cells("hi", 30), "hi");
+        // A wide-glyph string is capped by *cells*: the result (incl. the `…`)
+        // never exceeds the budget, though the char count alone would overflow.
+        let wide = "文".repeat(40); // 80 cells
+        let clipped = clip_to_cells(&wide, 30);
+        assert!(display_width(&clipped) <= 30);
+        assert!(clipped.ends_with('…'));
     }
 }
