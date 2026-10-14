@@ -757,6 +757,44 @@ mod tests {
         assert_eq!(app.buddy().known_tools(), 1);
     }
 
+    /// An end-to-end run of a plausible work session, fed exactly as the shell
+    /// hooks emit it (command on `start`, a bare `end` carrying code + duration).
+    /// Doubles as a readable demo: `cargo test -- --nocapture buddy_demo` prints
+    /// the mood and the buddy's line after each command.
+    #[test]
+    fn buddy_demo_session_learns_and_reacts() {
+        let mut app = App::new();
+        // (command, exit code, duration ms)
+        let session: &[(&str, i32, u64)] = &[
+            ("cargo build", 0, 3_200),
+            ("cargo test", 0, 8_100),
+            ("git status", 0, 40),
+            ("cargo build", 1, 1_500),
+            ("cargo build", 0, 12_000), // slow one — twice the usual
+            ("git commit", 0, 60),
+            ("docker ps", 0, 300), // never seen before
+        ];
+        for (cmd, code, dur) in session {
+            app.apply_event(Event::start(Some((*cmd).into())));
+            let mut end = Event::end(*code);
+            end.dur_ms = Some(*dur);
+            app.apply_event(end);
+            eprintln!(
+                "{:>12}  exit {:<2}  mood {:<11}  buddy: {}",
+                cmd,
+                code,
+                app.mood().label(),
+                app.speech().map(|q| q.text.as_str()).unwrap_or("—"),
+            );
+            // A few ticks of "time passing" between commands, as in a real session.
+            for _ in 0..3 {
+                app.step();
+            }
+        }
+        // It genuinely learned the tools it saw (cargo, git, docker).
+        assert_eq!(app.buddy().known_tools(), 3);
+    }
+
     #[test]
     fn a_failure_breaks_the_streak() {
         let mut app = App::new();

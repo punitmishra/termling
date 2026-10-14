@@ -27,6 +27,12 @@ Successful commands earn **XP** (streaks multiply it), you can switch **themes**
 to suit your terminal, and there's a small **arcade** of mini-games for when a
 build is running.
 
+It also has a **buddy brain**: a tiny, fully-local learner that watches which
+tools you run and *talks back* in a speech bubble — greeting a tool it's never
+seen, cheering a clean build, nudging you after a failure, and noticing when a
+command ran slow *for you*. It learns your workflow entirely on-device —
+**still zero network calls, still no new dependencies.**
+
 ```
 ┌─ your zsh (100% yours) ────┐┌─termling · focused─┐
 │ ~/proj ❯ git checkout <TAB>││       \ o /        │
@@ -254,7 +260,11 @@ shell's directory, and its last command's result.
 ### Persistence
 
 Progress is saved to `${XDG_STATE_HOME:-~/.local/state}/termling/state` — a
-one-line `"<xp> <best_streak>"` (no serde) — and restored next launch.
+one-line `"<xp> <best_streak>"` (no serde) — and restored next launch. The
+**buddy brain** keeps its learned model next to it in
+`${XDG_STATE_HOME:-~/.local/state}/termling/buddy` — a few KB of plain-text,
+space-delimited habit and bigram records, bounded so it can't grow unbounded.
+Both are local files; delete them to reset. Neither leaves your machine.
 
 ## Security
 
@@ -300,9 +310,12 @@ command's first word leaves your shell**. Tune it with `TERMLING_PRIVACY`:
 | `none` | no command text at all — only exit codes and timing |
 
 Whatever the setting, that data only ever travels the local socket to the
-companion pane, where it picks a mood and fills the recent-command feed. It is
-never persisted beyond the one-line XP file (see **Persistence**) and never sent
-anywhere else.
+companion pane, where it picks a mood, fills the recent-command feed, and feeds
+the **buddy brain**. The buddy learns only from this same filtered tool name —
+so `none` keeps it tool-blind (generic quips only) while `name`/`full` let it
+recognise and learn tools. What it learns is persisted *locally* to the bounded
+buddy file (see **Persistence**) and, like everything else here, is never sent
+anywhere off your machine.
 
 ## Limitations
 
@@ -371,6 +384,39 @@ The picker scrolls, so the list keeps working however many games you add — jus
 implement the `MiniGame` trait in `src/games/` and list a `GameKind` variant, and
 the picker and HUD pick it up automatically.
 
+## The buddy brain
+
+The creature doesn't just emote — it has a little **buddy brain** that learns
+*your* workflow and talks back, all **on-device with zero network**:
+
+```
+          ╭───────────────────╮
+          │ `cargo` ✓ ship it │
+          ╰─────────┬─────────╯
+                 \ o /
+                ( ^   ^ )
+                /|     |\
+```
+
+Behind the speech bubble are two tiny, hand-rolled structures — no serde, no
+model weights, no new crates:
+
+- **Per-tool habits** — how often you run each tool (`git`, `cargo`, `docker`,
+  …), how often it succeeds, and how long it usually takes. That's what lets the
+  buddy say *"`cargo` took 12.0s — slow for you"*, or greet a tool the first time
+  it sees it.
+- **A Markov bigram table** — which tool tends to follow which — so after a clean
+  build it can anticipate: *"`cargo` ✓ — `git` next?"*.
+
+Each finished command folds into both, and the buddy answers with one short,
+toned line: a cheer on success, a gentle nudge on failure (*"`cargo` hit exit 1
+— you've got this"*), or a learned observation that fades after a few seconds.
+
+It only ever sees the same privacy-filtered tool name the mood engine does (see
+**Privacy**): with `TERMLING_PRIVACY=none` the buddy still cheers and
+commiserates — it just won't name or learn individual tools. The model is a
+bounded few-KB file (see **Persistence**), so it never grows without limit.
+
 ## The mood engine
 
 Every frame, `mood::Mood::from_signals` maps a few shell signals to one mood
@@ -422,6 +468,7 @@ combination lights up for free.
 - `update.rs`— the `update`/`version` subcommands: delegate to brew/cargo, no network
 - `doctor.rs`— the `doctor` subcommand: a network-free environment checklist
 - `mood.rs`  — signals → mood
+- `buddy.rs` — the buddy brain: per-tool habits + a Markov bigram learner → toned quips, persisted locally
 - `doodle.rs`— characters + mood expressions + scenery → colored ASCII scene
 - `games/`   — the arcade: a `MiniGame` trait plus one module per game
 - `rng.rs`   — a tiny dependency-free xorshift PRNG

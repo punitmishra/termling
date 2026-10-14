@@ -169,7 +169,10 @@ fn speech_bubble(quip: &Quip, theme: &crate::theme::Theme) -> Vec<Line<'static>>
     // Cap the width so a long quip never blows out the pane; the buddy's lines are
     // written short, but this keeps us honest.
     let text = truncate(&quip.text, 30);
-    let inner = text.chars().count();
+    // Size the border by *display* width, not code points: the buddy's quips carry
+    // emoji (🔮 👀 ⚡) that occupy two terminal cells, so counting chars would make
+    // the right edge fall short of the content line it's supposed to box.
+    let inner = display_width(&text);
     let bar: String = "─".repeat(inner + 2);
 
     vec![
@@ -178,6 +181,28 @@ fn speech_bubble(quip: &Quip, theme: &crate::theme::Theme) -> Vec<Line<'static>>
         Line::styled(format!("╰{bar}╯"), style),
         Line::styled("▾", style),
     ]
+}
+
+/// A pragmatic terminal display width for the buddy's quip glyphs. We don't ship a
+/// full Unicode-width table (that would mean a new dependency, against the crate's
+/// zero-dep ethos); this covers what the buddy actually renders: emoji in the
+/// supplementary plane and the `⚡` symbol take two cells, zero-width joiners and
+/// variation selectors take none, everything else (ASCII, box-drawing, `✓`) one.
+/// It matches what ratatui's own width calc does for these glyphs, so the boxed
+/// border and the centered content line come out the same width.
+fn display_width(s: &str) -> usize {
+    s.chars()
+        .map(|c| {
+            let cp = c as u32;
+            if cp == 0x200D || (0xFE00..=0xFE0F).contains(&cp) {
+                0
+            } else if cp >= 0x1F000 || cp == 0x26A1 {
+                2
+            } else {
+                1
+            }
+        })
+        .sum()
 }
 
 /// Map a quip's tone to a palette entry.
@@ -385,5 +410,23 @@ fn truncate(s: &str, max: usize) -> String {
     } else {
         let keep = max.saturating_sub(1);
         format!("{}…", s.chars().take(keep).collect::<String>())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_width_counts_emoji_as_two_cells() {
+        // ASCII and box-drawing: one cell each.
+        assert_eq!(display_width("cargo"), 5);
+        assert_eq!(display_width("✓ nice"), 6); // ✓ is a one-cell check mark
+                                                // The buddy's wide emoji take two cells each.
+        assert_eq!(display_width("🔮"), 2);
+        assert_eq!(display_width("👀"), 2);
+        assert_eq!(display_width("⚡"), 2);
+        // A realistic quip: "`cargo` ✓" is 9 cells; adding a 2-cell emoji adds 2.
+        assert_eq!(display_width("`docker` 👀"), display_width("`docker` ") + 2);
     }
 }
