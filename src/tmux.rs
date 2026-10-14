@@ -10,12 +10,16 @@
 //! it binds the exact socket the shell emits to).
 
 use std::io;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use crate::event;
 
 /// Width of the companion pane, in columns.
 const SIDEBAR_COLS: &str = "34";
+
+/// kitty can't size a split in absolute columns — only as a percentage of the
+/// space (`--bias`). ~30% lands near [`SIDEBAR_COLS`] on a typical window.
+const KITTY_BIAS: &str = "30";
 
 /// The `tmux` subcommand: open the companion beside your shell now, if we can.
 pub fn launch() -> io::Result<()> {
@@ -70,33 +74,43 @@ fn spawn_companion(scope: &str) -> bool {
                 &scope_env,
                 &exe,
             ])
+            .stdout(Stdio::null())
             .status();
         return matches!(status, Ok(s) if s.success());
     }
 
     if std::env::var_os("ITERM_SESSION_ID").is_some() {
         // iTerm2 has no CLI for splitting, so drive it with AppleScript. The new
-        // session runs `env … <exe>` so it carries the guard + scope.
+        // session runs `env … <exe>` so it carries the guard + scope. osascript
+        // echoes the new session's object ref, so null stdout or the hook would
+        // print it into the user's shell at startup.
         let inner = format!("env TERMLING_COMPANION=1 TERMLING_SCOPE={scope} '{exe}'");
         let script = format!(
             "tell application \"iTerm2\" to tell current session of current window \
              to split vertically with default profile command \"{}\"",
             applescript_escape(&inner)
         );
-        let status = Command::new("osascript").args(["-e", &script]).status();
+        let status = Command::new("osascript")
+            .args(["-e", &script])
+            .stdout(Stdio::null())
+            .status();
         return matches!(status, Ok(s) if s.success());
     }
 
     if std::env::var_os("KITTY_WINDOW_ID").is_some() {
         // kitty's remote control: split a new OS-window-less pane to the side and
-        // keep focus on the shell. Requires `allow_remote_control` in kitty.conf;
-        // if it's off the command fails and we fall through to the recipe.
+        // keep focus on the shell. `--bias` narrows it toward SIDEBAR_COLS (kitty
+        // ≥0.36; older kitty rejects it and we fall through to the recipe).
+        // Requires `allow_remote_control` in kitty.conf; if it's off the command
+        // fails and we fall through. Null stdout — launch prints the new id.
         let status = Command::new("kitten")
             .args([
                 "@",
                 "launch",
                 "--type=window",
                 "--location=vsplit",
+                "--bias",
+                KITTY_BIAS,
                 "--dont-take-focus",
                 "--",
                 "env",
@@ -104,30 +118,36 @@ fn spawn_companion(scope: &str) -> bool {
                 &format!("TERMLING_SCOPE={scope}"),
                 &exe,
             ])
+            .stdout(Stdio::null())
             .status();
         return matches!(status, Ok(s) if s.success());
     }
 
     if std::env::var_os("WEZTERM_PANE").is_some() {
-        // WezTerm's CLI splits the active pane; it moves focus to the new pane, so
-        // hand focus back to the shell afterward. Best-effort — a failed activate
-        // still leaves a working companion.
+        // WezTerm's CLI splits the active pane; `--cells` sizes it in exact
+        // columns. It moves focus to the new pane, so hand focus back to the
+        // shell afterward. Best-effort — a failed activate still leaves a working
+        // companion. Null stdout — split-pane prints the new pane id.
         let status = Command::new("wezterm")
             .args([
                 "cli",
                 "split-pane",
                 "--right",
+                "--cells",
+                SIDEBAR_COLS,
                 "--",
                 "env",
                 "TERMLING_COMPANION=1",
                 &format!("TERMLING_SCOPE={scope}"),
                 &exe,
             ])
+            .stdout(Stdio::null())
             .status();
         if matches!(status, Ok(s) if s.success()) {
             let shell_pane = std::env::var("WEZTERM_PANE").unwrap_or_default();
             let _ = Command::new("wezterm")
                 .args(["cli", "activate-pane", "--pane-id", &shell_pane])
+                .stdout(Stdio::null())
                 .status();
             return true;
         }
