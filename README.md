@@ -266,6 +266,8 @@ shell's directory, and its last command's result.
 | `TERMLING_ONLINE` | `1` enables the networked dashboard panes (only in an `--features online` build; off by default) |
 | `TERMLING_WEATHER` | `"lat,lon"` for the weather pane (online) |
 | `TERMLING_STOCKS` | comma-separated tickers for the stocks pane, e.g. `AAPL,MSFT` (online) |
+| `TERMLING_WEATHER_UNITS` | `c` (default) / `f` — Celsius or Fahrenheit for the weather pane (online) |
+| `TERMLING_NEWS_COUNT` | headlines shown in the news / dev-news panes, default 6 (1–12) (online) |
 | `TERMLING_PANES` | pick & order dashboard panes, e.g. `git,weather,ai`; unknown/unavailable names are skipped (default: all) |
 | `ANTHROPIC_API_KEY` | API key for the Claude "ai tip" pane (online); the pane is inert without it |
 
@@ -450,7 +452,9 @@ bounded few-KB file (see **Persistence**), so it never grows without limit.
 Press **`d`** in the companion to open the **dashboard**: a sidebar of info
 *panes* beside your creature. `↑/↓` pick a pane, **`s` cycles the layout**
 (focused → grid → columns → rows — a 2×2 grid, a vertical split, or a horizontal
-split, windowed on the selection), `r` refreshes, `esc` returns to the creature.
+split, windowed on the selection), **`b`** hides/shows the buddy strip (a
+full-height dashboard), `r` refreshes, `esc` returns to the creature. Your
+selected pane, layout, and strip choice are **remembered across restarts**.
 Choose and order which panes appear with `TERMLING_PANES` (e.g.
 `TERMLING_PANES=git,weather,ai`).
 
@@ -475,6 +479,8 @@ sit under it:
 ```
 
 **Local panes — always available, still zero-network:**
+- **clock** — the date, time, timezone, and a current-month calendar with today
+  highlighted (pure local time; no subprocess, no network).
 - **git** — branch, staged/dirty counts, ahead/behind, recent commits (read by
   running `git`, a subprocess — never the network).
 - **system** — load average, uptime, and memory (from `/proc` on Linux,
@@ -551,7 +557,7 @@ combination lights up for free.
 - `doctor.rs`— the `doctor` subcommand: a network-free environment checklist
 - `mood.rs`  — signals → mood
 - `buddy.rs` — the buddy brain: per-tool habits + a Markov bigram learner → toned quips, persisted locally
-- `panes/`   — the dashboard: a `Pane` trait + `PaneKind` registry; local panes (git/system/buddy) always, online panes (weather/stocks/news/dev-news/ai) under `--features online`
+- `panes/`   — the dashboard: a `Pane` trait + `PaneKind` registry; local panes (clock/git/system/buddy) always, online panes (weather/stocks/news/dev-news/ai) under `--features online`
 - `net.rs`   — the single network boundary: a background fetch worker + channel, drained non-blocking; real HTTP only under `--features online`
 - `doodle.rs`— characters + mood expressions + scenery → colored ASCII scene
 - `games/`   — the arcade: a `MiniGame` trait plus one module per game (difficulty/speed options)
