@@ -140,6 +140,24 @@ impl Buddy {
         self.habits.len()
     }
 
+    /// The `n` tools you run most, strongest first (ties broken by name), as
+    /// `(tool, habit)` borrows into the live model. A read-only view for the
+    /// buddy-insights dashboard pane; pair each [`Habit`] with
+    /// [`Habit::success_rate`] / [`Habit::runs`] to draw a leaderboard.
+    pub fn top_tools(&self, n: usize) -> Vec<(&str, &Habit)> {
+        let mut v: Vec<(&str, &Habit)> = self.habits.iter().map(|(k, h)| (k.as_str(), h)).collect();
+        v.sort_by(|a, b| b.1.runs.cmp(&a.1.runs).then_with(|| a.0.cmp(b.0)));
+        v.truncate(n);
+        v
+    }
+
+    /// The tool the buddy expects to follow `from`, with confidence in `0..=1`,
+    /// when it is confident enough to say so (`None` otherwise). A public,
+    /// read-only window onto the learned bigram model for the dashboard.
+    pub fn predict_after(&self, from: &str) -> Option<(String, f32)> {
+        self.prediction_from(from)
+    }
+
     /// A command just *started*. We don't learn from it yet (no outcome), but it's
     /// a good moment to greet a never-seen tool or predict what usually follows the
     /// last thing that ran. Returns `None` when the buddy has nothing worth saying.
