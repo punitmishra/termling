@@ -62,25 +62,22 @@ pane is this program.
 Grab the binary one of these ways, then wire up the shell hook (**Quick start**,
 below):
 
-> **Status: pre-release — no tag cut yet.** The methods below marked _“needs the
-> first release”_ (the one-liner, Homebrew, `cargo install termling`, and the
-> prebuilt tarballs) only light up once a `vX.Y.Z` tag is pushed and the release
-> pipeline runs — so `brew install …` won't work yet. **You can still install and
-> fully test termling today** with either always-available path — straight from
-> the repo, no release and no sudo:
+> **v0.1.0 is out.** The **one-line installer** and **prebuilt tarballs** below
+> work now (macOS Apple Silicon + x86_64 Linux). **Homebrew** and `cargo install
+> termling` are marked _“pending publish”_ — the release pipeline is wired for
+> both but they stay dark until the maintainer adds the crates.io / Homebrew-tap
+> tokens (see **Releasing**). Any platform with a Rust toolchain can always
+> install from the repo today:
 >
 > ```sh
 > cargo install --git https://github.com/punitmishra/termling
 > ```
 >
-> That puts `termling` on your `PATH` (in `~/.cargo/bin`). Prefer not to install
-> at all? Build it and point a shell at the local binary — see **From source**
-> and *Try it without installing* below. To update a `--git` install later,
-> re-run that same command — cargo won't refresh it on its own. (`termling
-> update` targets the crates.io release, which doesn't exist until the first tag
-> is cut.)
+> That puts `termling` on your `PATH` (in `~/.cargo/bin`) — and it's the path for
+> **Intel macOS**, which doesn't have a prebuilt tarball yet. To update a `--git`
+> install later, re-run that same command — cargo won't refresh it on its own.
 
-**One-line installer** — _needs the first release_ (macOS & Linux, no sudo — installs to `~/.local/bin`):
+**One-line installer** (macOS & Linux, no sudo — installs to `~/.local/bin`):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/punitmishra/termling/main/scripts/install.sh | sh
@@ -91,19 +88,19 @@ SHA-256, and drops `termling` in `${TERMLING_INSTALL_DIR:-$HOME/.local/bin}`.
 This installer script is the *only* part of termling that touches the network;
 the binary itself never does.
 
-**Homebrew** — _needs the first release_ (macOS & Linux):
+**Homebrew** — _pending publish_ (needs the `HOMEBREW_TAP_TOKEN` secret; macOS & Linux):
 
 ```sh
 brew install punitmishra/termling/termling
 ```
 
-**Cargo** — _needs the first release_ (any platform with a Rust toolchain; until then use `cargo install --git …` above):
+**Cargo** — _pending publish_ (needs the `CARGO_REGISTRY_TOKEN` secret; until then use `cargo install --git …` above):
 
 ```sh
 cargo install termling
 ```
 
-**Prebuilt binaries** — _needs the first release_ — download the tarball for your platform from the
+**Prebuilt binaries** — download the tarball for your platform from the
 [latest release](https://github.com/punitmishra/termling/releases/latest), then
 drop `termling` anywhere on your `PATH`:
 
