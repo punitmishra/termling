@@ -24,6 +24,8 @@ use crate::theme::Theme;
 use ratatui::style::Color;
 
 #[cfg(feature = "online")]
+mod ai;
+#[cfg(feature = "online")]
 mod devnews;
 #[cfg(feature = "online")]
 mod news;
@@ -31,8 +33,6 @@ mod news;
 mod stocks;
 #[cfg(feature = "online")]
 mod weather;
-#[cfg(feature = "online")]
-mod ai;
 
 /// Every pane in the dashboard. Add a variant here (plus a file implementing
 /// [`Pane`]) and wire it into [`ALL`](PaneKind::ALL), [`name`](PaneKind::name),
