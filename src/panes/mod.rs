@@ -20,6 +20,8 @@ mod clock;
 mod git;
 mod system;
 
+use std::path::PathBuf;
+
 use crate::doodle::{Row, Seg};
 use crate::net::{FetchResult, FetchSpec};
 use crate::theme::Theme;
@@ -294,6 +296,18 @@ impl Layout {
         }
     }
 
+    /// Resolve a layout from its [`label`](Layout::label) — for restoring the
+    /// persisted choice. Unknown strings → `None`.
+    pub fn from_label(s: &str) -> Option<Layout> {
+        match s {
+            "focused" => Some(Layout::Focused),
+            "grid" => Some(Layout::Grid),
+            "columns" => Some(Layout::Columns),
+            "rows" => Some(Layout::Rows),
+            _ => None,
+        }
+    }
+
     /// How many panes this layout shows at once (a window around the selection).
     pub fn cells(self) -> usize {
         match self {
@@ -311,18 +325,52 @@ pub struct Dashboard {
     panes: Vec<Box<dyn Pane>>,
     sel: usize,
     layout: Layout,
+    /// Whether the creature strip atop the dashboard is hidden (the `b` key),
+    /// giving the whole area to the panes. Persisted across restarts.
+    strip_hidden: bool,
 }
 
 impl Dashboard {
     pub fn new() -> Dashboard {
         let kinds = configured_kinds();
         let panes = kinds.iter().map(|k| k.make()).collect();
+        // Restore the last selection (by name, so it survives a changed pane set),
+        // layout, and strip visibility; fall back to the defaults on anything odd.
+        let (saved_name, saved_layout, strip_hidden) = load_dash();
+        let sel = saved_name
+            .as_deref()
+            .and_then(PaneKind::from_name)
+            .and_then(|k| kinds.iter().position(|&x| x == k))
+            .unwrap_or(0);
         Dashboard {
             kinds,
             panes,
-            sel: 0,
-            layout: Layout::Focused,
+            sel,
+            layout: saved_layout.unwrap_or(Layout::Focused),
+            strip_hidden,
         }
+    }
+
+    /// Persist the current selection (by name), layout, and strip visibility.
+    /// Called whenever any of them change. All fs is best-effort — never panics.
+    fn save(&self) {
+        let name = self
+            .kinds
+            .get(self.sel)
+            .map(|k| k.name())
+            .unwrap_or("welcome");
+        save_dash(name, self.layout, self.strip_hidden);
+    }
+
+    /// Whether the creature strip is hidden (full-height dashboard).
+    pub fn strip_hidden(&self) -> bool {
+        self.strip_hidden
+    }
+
+    /// Show/hide the creature strip (the `b` key), persisting the choice.
+    pub fn toggle_strip(&mut self) {
+        self.strip_hidden = !self.strip_hidden;
+        self.save();
     }
 
     pub fn kinds(&self) -> &[PaneKind] {
@@ -340,11 +388,13 @@ impl Dashboard {
     /// Step to the next content layout (the `s` key).
     pub fn cycle_layout(&mut self) {
         self.layout = self.layout.next();
+        self.save();
     }
 
     pub fn next(&mut self) {
         if !self.panes.is_empty() {
             self.sel = (self.sel + 1) % self.panes.len();
+            self.save();
         }
     }
 
@@ -352,6 +402,7 @@ impl Dashboard {
         if !self.panes.is_empty() {
             let n = self.panes.len();
             self.sel = (self.sel + n - 1) % n;
+            self.save();
         }
     }
 
@@ -401,6 +452,50 @@ impl Default for Dashboard {
     }
 }
 
+// --- dashboard UX persistence ----------------------------------------------
+//
+// The selected pane (by name) + layout + strip visibility live in one tiny file:
+// "<pane> <layout> <strip>". No serde — the same hand-rolled ethos as the XP
+// state in `app.rs`. All reads/writes are best-effort and never panic.
+
+/// `${XDG_STATE_HOME:-~/.local/state}/termling/dashboard`, or `None` under test
+/// so unit tests stay hermetic and never touch the user's real state file.
+fn dash_state_path() -> Option<PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
+    Some(base.join("termling").join("dashboard"))
+}
+
+/// Restore `(selected pane name, layout, strip hidden)`, defaulting each field
+/// independently so a partial or stale file still yields a usable dashboard.
+fn load_dash() -> (Option<String>, Option<Layout>, bool) {
+    let parse = || -> Option<(Option<String>, Option<Layout>, bool)> {
+        let text = std::fs::read_to_string(dash_state_path()?).ok()?;
+        let mut it = text.split_whitespace();
+        let name = it.next().map(str::to_string);
+        let layout = it.next().and_then(Layout::from_label);
+        let strip = matches!(it.next(), Some("1"));
+        Some((name, layout, strip))
+    };
+    parse().unwrap_or((None, None, false))
+}
+
+fn save_dash(name: &str, layout: Layout, strip_hidden: bool) {
+    if let Some(path) = dash_state_path() {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(
+            path,
+            format!("{name} {} {}", layout.label(), strip_hidden as u8),
+        );
+    }
+}
+
 /// The built-in welcome tile: a short orientation + what the dashboard can do.
 struct Welcome;
 
@@ -415,6 +510,7 @@ impl Pane for Welcome {
             line("", theme.dim),
             line("↑/↓  pick a pane", theme.dim),
             line("s    cycle layout", theme.dim),
+            line("b    hide/show buddy", theme.dim),
             line("r    refresh", theme.dim),
             line("esc  back to the creature", theme.dim),
             line("", theme.dim),
@@ -458,6 +554,22 @@ mod tests {
         assert_eq!(dash.layout(), Layout::Rows);
         dash.cycle_layout();
         assert_eq!(dash.layout(), Layout::Focused);
+    }
+
+    #[test]
+    fn strip_toggle_flips_and_layout_labels_round_trip() {
+        let mut dash = Dashboard::new();
+        // Under test the state file is off-disk, so it starts shown.
+        assert!(!dash.strip_hidden());
+        dash.toggle_strip();
+        assert!(dash.strip_hidden());
+        dash.toggle_strip();
+        assert!(!dash.strip_hidden());
+        // Every layout label resolves back to itself (persistence round-trip).
+        for l in [Layout::Focused, Layout::Grid, Layout::Columns, Layout::Rows] {
+            assert_eq!(Layout::from_label(l.label()), Some(l));
+        }
+        assert_eq!(Layout::from_label("nonsense"), None);
     }
 
     #[test]

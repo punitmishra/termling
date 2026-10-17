@@ -453,6 +453,11 @@ impl App {
         self.dashboard.cycle_layout();
     }
 
+    /// Hide/show the creature strip atop the dashboard (the `b` key).
+    pub fn dashboard_toggle_strip(&mut self) {
+        self.dashboard.toggle_strip();
+    }
+
     /// Force every pane to recollect / re-fetch. Works offline too: local panes
     /// are reset unconditionally, and online fetches are pumped only when a net
     /// worker exists.

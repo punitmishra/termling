@@ -220,6 +220,7 @@ fn dashboard_key(app: &mut App, key: KeyEvent) {
         KeyCode::Up | KeyCode::Char('k') => app.dashboard_prev(),
         KeyCode::Down | KeyCode::Char('j') => app.dashboard_next(),
         KeyCode::Char('s') => app.dashboard_cycle_layout(),
+        KeyCode::Char('b') => app.dashboard_toggle_strip(),
         KeyCode::Char('r') => app.dashboard_refresh(),
         KeyCode::Esc | KeyCode::Char('q') => app.exit_dashboard(),
         _ => {}
