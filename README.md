@@ -62,21 +62,25 @@ pane is this program.
 Grab the binary one of these ways, then wire up the shell hook (**Quick start**,
 below):
 
-> **Before the first release?** The one-liner, Homebrew, `cargo install
-> termling`, and prebuilt tarballs below all light up with the first tagged
-> release. Until then, install straight from the repo — this works **today**, no
-> release needed and no sudo:
+> **Status: pre-release — no tag cut yet.** The methods below marked _“needs the
+> first release”_ (the one-liner, Homebrew, `cargo install termling`, and the
+> prebuilt tarballs) only light up once a `vX.Y.Z` tag is pushed and the release
+> pipeline runs — so `brew install …` won't work yet. **You can still install and
+> fully test termling today** with either always-available path — straight from
+> the repo, no release and no sudo:
 >
 > ```sh
 > cargo install --git https://github.com/punitmishra/termling
 > ```
 >
-> That puts `termling` on your `PATH` (in `~/.cargo/bin`). To update a `--git`
-> install later, re-run that same command — cargo won't refresh it on its own.
-> (`termling update` targets the crates.io release, which doesn't exist until
-> the first tag is cut.)
+> That puts `termling` on your `PATH` (in `~/.cargo/bin`). Prefer not to install
+> at all? Build it and point a shell at the local binary — see **From source**
+> and *Try it without installing* below. To update a `--git` install later,
+> re-run that same command — cargo won't refresh it on its own. (`termling
+> update` targets the crates.io release, which doesn't exist until the first tag
+> is cut.)
 
-**One-line installer** (macOS & Linux, no sudo — installs to `~/.local/bin`):
+**One-line installer** — _needs the first release_ (macOS & Linux, no sudo — installs to `~/.local/bin`):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/punitmishra/termling/main/scripts/install.sh | sh
@@ -87,19 +91,19 @@ SHA-256, and drops `termling` in `${TERMLING_INSTALL_DIR:-$HOME/.local/bin}`.
 This installer script is the *only* part of termling that touches the network;
 the binary itself never does.
 
-**Homebrew** (macOS & Linux):
+**Homebrew** — _needs the first release_ (macOS & Linux):
 
 ```sh
 brew install punitmishra/termling/termling
 ```
 
-**Cargo** (any platform with a Rust toolchain):
+**Cargo** — _needs the first release_ (any platform with a Rust toolchain; until then use `cargo install --git …` above):
 
 ```sh
 cargo install termling
 ```
 
-**Prebuilt binaries** — download the tarball for your platform from the
+**Prebuilt binaries** — _needs the first release_ — download the tarball for your platform from the
 [latest release](https://github.com/punitmishra/termling/releases/latest), then
 drop `termling` anywhere on your `PATH`:
 
@@ -453,6 +457,26 @@ split, windowed on the selection), `r` refreshes, `esc` returns to the creature.
 Choose and order which panes appear with `TERMLING_PANES` (e.g.
 `TERMLING_PANES=git,weather,ai`).
 
+It's laid out like a terminal split — the buddy stays in view up top, the panes
+sit under it:
+
+```
+┌ blob · curious ──────────────────────────────────────────┐
+│                       (·◕    ◕·)                          │
+│                      '(   ··   ) `                        │
+│                       ╰─◡──◡─╯                            │
+│             lv 56  ███████░  5592xp · streak 0            │
+└───────────────────────────────────────────────────────────┘
+┌ panes ───────┐┌ ▸ weather ───────┐┌ hacker news ─────────┐
+│▸ weather ·   ││18.6 °C           ││1. Ultramarine 1 Flash│
+│  news ·      ││clear sky         ││2. Tesla Roadster     │
+│  devnews ·   ││wind 5.9 km/h     ││3. Llama.cpp on a PS5 │
+│s columns     ││37.77,-122.42     ││4. Claude reveals ECD…│
+│r refresh     ││                  ││5. You could have inv…│
+│esc back      │└──────────────────┘└──────────────────────┘
+└──────────────┘
+```
+
 **Local panes — always available, still zero-network:**
 - **git** — branch, staged/dirty counts, ahead/behind, recent commits (read by
   running `git`, a subprocess — never the network).
@@ -580,6 +604,34 @@ way where you reasonably can; the sockets, RNG, games, and themes are all
 hand-rolled on purpose. Run `cargo fmt`, `cargo clippy`, and `cargo test`
 before opening a PR, and open an issue first for anything large so we can agree
 on the shape.
+
+## Releasing
+
+termling has no published release yet, which is why `brew install …`, `cargo
+install termling`, the `curl` one-liner, and the prebuilt tarballs don't work
+yet (install from the repo in the meantime — see **Install**). Cutting a release
+is just pushing a tag:
+
+```sh
+cargo test && cargo clippy --all-targets -- -D warnings   # green first
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+That fires `.github/workflows/release.yml`, which:
+
+1. **Builds** release tarballs for `aarch64`/`x86_64` macOS and `x86_64` Linux,
+   each with a `.sha256`.
+2. **Cuts the GitHub Release** with those assets — this alone makes the `curl`
+   one-liner and the prebuilt-tarball instructions work.
+3. **Publishes to crates.io** — only if the `CARGO_REGISTRY_TOKEN` repo secret is
+   set (else skipped), which lights up `cargo install termling`.
+4. **Bumps the Homebrew formula** in the `punitmishra/homebrew-termling` tap —
+   only if the `HOMEBREW_TAP_TOKEN` secret is set (else skipped), which lights up
+   `brew install punitmishra/termling/termling`.
+
+So a tag with neither secret still gives working `curl`/tarball installs; add
+`CARGO_REGISTRY_TOKEN` for crates.io and `HOMEBREW_TAP_TOKEN` for Homebrew. Keep
+`Cargo.toml`'s `version` in step with the tag.
 
 ## License
 
