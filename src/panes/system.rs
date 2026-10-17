@@ -12,6 +12,7 @@
 //! Whatever a platform can't supply shows as "—". Probing is cheap but not free,
 //! so the pane refreshes at most once every [`REFRESH_TICKS`] ticks.
 
+use super::bg::Bg;
 use crate::doodle::{Row, Seg};
 use crate::theme::Theme;
 
@@ -32,10 +33,13 @@ struct SysInfo {
     mem_used_kb: Option<u64>,
 }
 
-/// The vitals tile. Holds a cached [`SysInfo`] refreshed on a tick cadence.
+/// The vitals tile. Holds a cached [`SysInfo`]; re-reads (which shell out on
+/// macOS) run on a background thread (see [`Bg`]) so they never stall rendering.
 pub struct SystemPane {
     info: SysInfo,
     next_refresh: u64,
+    /// Off-thread re-collection; its result lands on a later tick.
+    bg: Bg<SysInfo>,
 }
 
 impl SystemPane {
@@ -44,11 +48,8 @@ impl SystemPane {
         SystemPane {
             info: collect(),
             next_refresh: REFRESH_TICKS,
+            bg: Bg::new(),
         }
-    }
-
-    fn refresh(&mut self) {
-        self.info = collect();
     }
 }
 
@@ -64,10 +65,20 @@ impl super::Pane for SystemPane {
     }
 
     fn tick(&mut self, frame: u64) {
+        // Pull in a completed background reading, if one landed.
+        if let Some(fresh) = self.bg.take() {
+            self.info = fresh;
+        }
+        // Kick off the next reading off-thread when due.
         if frame >= self.next_refresh {
-            self.refresh();
+            self.bg.trigger(collect);
             self.next_refresh = frame.saturating_add(REFRESH_TICKS);
         }
+    }
+
+    fn refresh(&mut self) {
+        // Force the next tick to re-read (off-thread; never blocks here).
+        self.next_refresh = 0;
     }
 
     fn render(&self, _width: u16, _height: u16, theme: &Theme) -> Vec<Row> {
@@ -276,6 +287,7 @@ mod tests {
         let pane = SystemPane {
             info: SysInfo::default(),
             next_refresh: REFRESH_TICKS,
+            bg: Bg::new(),
         };
         let rows = pane.render(40, 12, &THEMES[0]);
         assert_eq!(rows.len(), 3);

@@ -14,6 +14,7 @@
 //! through [`Pane::on_data`]. A pane never blocks and never calls the network
 //! itself.
 
+mod bg;
 mod buddy_insights;
 mod git;
 mod system;
@@ -156,6 +157,11 @@ pub trait Pane {
     /// Advance any animation / mark data stale. Called once per dashboard tick.
     fn tick(&mut self, _frame: u64) {}
 
+    /// Force a re-fetch / re-collect on the next tick. Online panes reset their
+    /// staleness (and the AI pane re-arms its one-shot); local panes drop their
+    /// refresh cadence so they recollect. Default: no-op.
+    fn refresh(&mut self) {}
+
     /// A network request this pane wants made *now*, if its data is due. Local
     /// panes return `None`. The dashboard only forwards these in online mode.
     fn poll_fetch(&mut self) -> Option<FetchSpec> {
@@ -243,6 +249,13 @@ impl Dashboard {
     pub fn tick(&mut self, frame: u64) {
         for p in &mut self.panes {
             p.tick(frame);
+        }
+    }
+
+    /// Ask every pane to re-fetch / re-collect on its next tick (the `r` key).
+    pub fn refresh_all(&mut self) {
+        for p in &mut self.panes {
+            p.refresh();
         }
     }
 

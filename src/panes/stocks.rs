@@ -80,6 +80,11 @@ impl Pane for Stocks {
         self.frame = frame;
     }
 
+    fn refresh(&mut self) {
+        // Mark the cached quotes stale so the next poll re-fetches.
+        self.fetched_at = None;
+    }
+
     fn poll_fetch(&mut self) -> Option<FetchSpec> {
         if !net::online_enabled() || self.pending || !self.due() {
             return None;

@@ -75,6 +75,11 @@ impl Pane for News {
         self.frame = frame;
     }
 
+    fn refresh(&mut self) {
+        // Force a fresh cycle on the next poll by marking the cache stale.
+        self.fetched_at = None;
+    }
+
     fn poll_fetch(&mut self) -> Option<FetchSpec> {
         if !net::online_enabled() || self.pending {
             return None;
@@ -125,6 +130,10 @@ impl Pane for News {
                 self.stories.push(title);
             }
             self.error = None;
+        } else if self.have_top {
+            // HN returns `null` for dead/deleted items. Once we're fetching items
+            // (`have_top`), skip an unparseable/null one and keep the queue going
+            // rather than aborting the whole cycle with "bad response".
         } else {
             self.error = Some("bad response".into());
             self.cycle_active = false;
@@ -240,5 +249,41 @@ mod tests {
         });
         let out = text(&n.render(40, 12, &THEMES[0]));
         assert!(out.contains("timed out"), "{out}");
+    }
+
+    #[test]
+    fn null_item_is_skipped_not_fatal() {
+        // HN returns literal `null` for a dead/deleted item; it must not abort
+        // the cycle. Prime the item-fetch phase with a top list first.
+        let mut n = News::new();
+        n.on_data(&FetchResult {
+            pane: PaneKind::News,
+            body: Ok(TOP_SAMPLE.into()),
+        });
+        assert!(n.have_top);
+        let before = n.stories.len();
+        n.on_data(&FetchResult {
+            pane: PaneKind::News,
+            body: Ok("null".into()),
+        });
+        // Skipped: no error, no phantom headline.
+        assert!(n.error.is_none(), "null should not raise an error");
+        assert_eq!(n.stories.len(), before);
+        // A good item after the null still appends normally.
+        n.on_data(&FetchResult {
+            pane: PaneKind::News,
+            body: Ok(ITEM_SAMPLE.into()),
+        });
+        assert_eq!(n.stories.len(), before + 1);
+    }
+
+    #[test]
+    fn refresh_marks_stale() {
+        let mut n = News::new();
+        n.frame = 1;
+        n.fetched_at = Some(1); // just fetched → not stale
+        assert!(!n.stale());
+        n.refresh();
+        assert!(n.stale()); // `r` forces a fresh cycle
     }
 }

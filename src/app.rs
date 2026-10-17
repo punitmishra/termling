@@ -453,8 +453,11 @@ impl App {
         self.dashboard.toggle_split();
     }
 
-    /// Force every pane to re-fetch on the next pump (online mode only).
+    /// Force every pane to recollect / re-fetch. Works offline too: local panes
+    /// are reset unconditionally, and online fetches are pumped only when a net
+    /// worker exists.
     pub fn dashboard_refresh(&mut self) {
+        self.dashboard.refresh_all();
         if let Some(net) = &self.net {
             for spec in self.dashboard.poll_fetches() {
                 net.request(spec);
@@ -558,7 +561,9 @@ impl App {
     pub fn step_interval(&self) -> Duration {
         match (self.mode, &self.game) {
             (Mode::Game, Some(g)) if !g.is_over() => {
-                let ms = 150u64.saturating_sub((g.level() as u64 - 1) * 12).max(55);
+                let ms = 150u64
+                    .saturating_sub(g.level().saturating_sub(1) as u64 * 12)
+                    .max(55);
                 // Fold in the chosen speed on top of the per-game level curve.
                 Duration::from_millis(self.options.speed.scale(ms))
             }

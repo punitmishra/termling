@@ -10,6 +10,7 @@
 
 use std::process::Command;
 
+use super::bg::Bg;
 use crate::doodle::Row;
 use crate::panes::line;
 use crate::theme::Theme;
@@ -38,11 +39,14 @@ struct GitInfo {
     commits: Vec<String>,
 }
 
-/// The git summary tile. Holds a cached [`GitInfo`] refreshed on a tick cadence.
+/// The git summary tile. Holds a cached [`GitInfo`]; re-collection runs on a
+/// background thread (see [`Bg`]) so a large repo never stalls the render loop.
 pub struct GitPane {
     info: GitInfo,
     /// Tick at which we may refresh again; `0` means "due now".
     next_refresh: u64,
+    /// Off-thread re-collection; its result lands on a later tick.
+    bg: Bg<GitInfo>,
 }
 
 impl GitPane {
@@ -51,11 +55,8 @@ impl GitPane {
         GitPane {
             info: collect(),
             next_refresh: REFRESH_TICKS,
+            bg: Bg::new(),
         }
-    }
-
-    fn refresh(&mut self) {
-        self.info = collect();
     }
 }
 
@@ -71,10 +72,20 @@ impl super::Pane for GitPane {
     }
 
     fn tick(&mut self, frame: u64) {
+        // Pull in a completed background collection, if one landed.
+        if let Some(fresh) = self.bg.take() {
+            self.info = fresh;
+        }
+        // Kick off the next collection off-thread when due.
         if frame >= self.next_refresh {
-            self.refresh();
+            self.bg.trigger(collect);
             self.next_refresh = frame.saturating_add(REFRESH_TICKS);
         }
+    }
+
+    fn refresh(&mut self) {
+        // Force the next tick to recollect (off-thread; never blocks here).
+        self.next_refresh = 0;
     }
 
     fn render(&self, _width: u16, _height: u16, theme: &Theme) -> Vec<Row> {
@@ -245,10 +256,19 @@ mod tests {
         let pane = GitPane {
             info: GitInfo::default(),
             next_refresh: REFRESH_TICKS,
+            bg: Bg::new(),
         };
         let rows = pane.render(40, 12, &THEMES[0]);
         assert!(!rows.is_empty());
         assert_eq!(pane.title(), "git");
+    }
+
+    #[test]
+    fn refresh_marks_due_now() {
+        let mut pane = GitPane::new();
+        pane.next_refresh = 9_999; // push the next refresh far out…
+        Pane::refresh(&mut pane); // …then `r` forces it due immediately.
+        assert_eq!(pane.next_refresh, 0);
     }
 
     #[test]

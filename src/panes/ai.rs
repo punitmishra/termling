@@ -15,7 +15,7 @@
 //! [Messages API]: https://docs.anthropic.com/en/api/messages
 
 use crate::doodle::Row;
-use crate::net::{FetchResult, FetchSpec, Method};
+use crate::net::{self, FetchResult, FetchSpec, Method};
 use crate::panes::{line, Pane, PaneKind};
 use crate::theme::Theme;
 
@@ -103,6 +103,12 @@ impl Pane for Ai {
     }
 
     fn poll_fetch(&mut self) -> Option<FetchSpec> {
+        // Defense-in-depth: this is the pane that spends money and carries the
+        // key, so double-gate on online mode exactly like the other online panes
+        // before we even look at the key.
+        if !net::online_enabled() {
+            return None;
+        }
         // Read the key fresh, at fetch time — it is never stored on the pane.
         match current_key() {
             None => {
@@ -131,6 +137,14 @@ impl Pane for Ai {
                     None
                 }
             }
+        }
+    }
+
+    fn refresh(&mut self) {
+        // Re-arm the once-per-session one-shot so `r` fetches a fresh tip —
+        // unless a request is already in flight (avoid a double spend).
+        if !matches!(self.state, Load::Loading) {
+            self.state = Load::Pending;
         }
     }
 

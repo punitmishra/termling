@@ -89,6 +89,11 @@ impl Pane for Weather {
         self.frame = frame;
     }
 
+    fn refresh(&mut self) {
+        // Mark the cached reading stale so the next poll re-fetches.
+        self.fetched_at = None;
+    }
+
     fn poll_fetch(&mut self) -> Option<FetchSpec> {
         if !net::online_enabled() || self.pending || !self.due() {
             return None;
@@ -277,6 +282,16 @@ mod tests {
         });
         let out = text(&w.render(40, 12, &THEMES[0]));
         assert!(out.contains("dns error"), "error: {out}");
+    }
+
+    #[test]
+    fn refresh_marks_due_again() {
+        let mut w = Weather::new();
+        w.frame = 1;
+        w.fetched_at = Some(1); // just fetched → not due
+        assert!(!w.due());
+        w.refresh();
+        assert!(w.due()); // `r` forces a re-fetch
     }
 
     #[test]

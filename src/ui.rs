@@ -54,13 +54,32 @@ fn draw_dashboard(f: &mut Frame, app: &App, area: Rect) {
             cells.push(rc[0]);
             cells.push(rc[1]);
         }
-        for ((kind, pane), cell) in dash.all().zip(cells) {
-            draw_pane(f, kind, pane, cell, &theme);
+        // Show the page of panes that contains the selection (not always 0–3),
+        // so the online panes are reachable in the grid, and mark the selected.
+        let start = grid_window_start(dash.sel());
+        for ((i, (kind, pane)), cell) in dash
+            .all()
+            .enumerate()
+            .skip(start)
+            .take(GRID_CELLS)
+            .zip(cells)
+        {
+            draw_pane(f, kind, pane, cell, &theme, i == dash.sel());
         }
     } else if let Some(pane) = dash.focused() {
         let kind = dash.kinds()[dash.sel()];
-        draw_pane(f, kind, pane, content, &theme);
+        draw_pane(f, kind, pane, content, &theme, false);
     }
+}
+
+/// Panes per grid page (2×2).
+const GRID_CELLS: usize = 4;
+
+/// The index the current grid page starts at: the page of [`GRID_CELLS`] panes
+/// that contains `sel`. Anchoring on the selection keeps the highlighted pane
+/// (including the online ones further down the list) on screen.
+fn grid_window_start(sel: usize) -> usize {
+    (sel / GRID_CELLS) * GRID_CELLS
 }
 
 /// The dashboard's left sidebar: one line per pane, the selected one highlighted,
@@ -101,11 +120,25 @@ fn draw_pane(
     pane: &dyn crate::panes::Pane,
     area: Rect,
     theme: &crate::theme::Theme,
+    selected: bool,
 ) {
+    // The selected tile gets the bar color + a ▸ marker so it stands out in the
+    // grid; the rest keep the quiet accent border.
+    let (border, title) = if selected {
+        (
+            Style::default().fg(theme.bar).add_modifier(Modifier::BOLD),
+            format!(" ▸ {} ", pane.title()),
+        )
+    } else {
+        (
+            Style::default().fg(theme.accent),
+            format!(" {} ", pane.title()),
+        )
+    };
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" {} ", pane.title()))
-        .border_style(Style::default().fg(theme.accent));
+        .title(title)
+        .border_style(border);
     let inner = block.inner(area);
 
     let rows = pane.render(inner.width, inner.height, theme);
@@ -601,6 +634,21 @@ mod tests {
         assert_eq!(display_width("かな"), 4);
         // A realistic quip: adding a 2-cell emoji adds exactly 2.
         assert_eq!(display_width("`docker` 👀"), display_width("`docker` ") + 2);
+    }
+
+    #[test]
+    fn grid_window_anchors_on_selection() {
+        // The first page covers panes 0..4.
+        assert_eq!(grid_window_start(0), 0);
+        assert_eq!(grid_window_start(3), 0);
+        // Selecting a later pane (e.g. an online pane at index 5) pages forward
+        // and still includes the selection in the window.
+        let start = grid_window_start(5);
+        assert_eq!(start, 4);
+        assert!((start..start + GRID_CELLS).contains(&5));
+        // Page boundaries land where expected.
+        assert_eq!(grid_window_start(4), 4);
+        assert_eq!(grid_window_start(8), 8);
     }
 
     #[test]

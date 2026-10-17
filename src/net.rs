@@ -120,7 +120,18 @@ pub fn online_enabled() -> bool {
 /// otherwise a clear error so a pane can say "built without online".
 #[cfg(feature = "online")]
 fn fetch_blocking(spec: &FetchSpec) -> Result<String, String> {
-    let agent = ureq::agent();
+    use std::sync::OnceLock;
+    use std::time::Duration;
+    // One agent, built once and reused across every fetch. Without explicit
+    // timeouts a single hung host would block this worker thread forever and
+    // wedge every online pane, so cap both the connect and the read at ~8s.
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    let agent = AGENT.get_or_init(|| {
+        ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(8))
+            .timeout_read(Duration::from_secs(8))
+            .build()
+    });
     let mut req = match spec.method {
         Method::Get => agent.get(&spec.url),
         Method::Post => agent.post(&spec.url),

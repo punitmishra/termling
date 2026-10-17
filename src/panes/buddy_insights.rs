@@ -8,6 +8,7 @@
 //! accessors on [`Buddy`] ([`Buddy::top_tools`] / [`Buddy::predict_after`]); this
 //! pane never writes. Fully local — no network, no new deps.
 
+use super::bg::Bg;
 use crate::buddy::Buddy;
 use crate::doodle::{Row, Seg};
 use crate::panes::line;
@@ -18,10 +19,14 @@ const RELOAD_TICKS: u64 = 30;
 /// How many tools to list in the leaderboard.
 const TOP_N: usize = 5;
 
-/// The buddy-insights tile. Holds its own freshly-loaded [`Buddy`].
+/// The buddy-insights tile. Holds its own [`Buddy`]; reloads (which read the
+/// persisted model from disk) run on a background thread (see [`Bg`]) so they
+/// never stall the render loop.
 pub struct BuddyPane {
     buddy: Buddy,
     next_reload: u64,
+    /// Off-thread reload; its result lands on a later tick.
+    bg: Bg<Buddy>,
 }
 
 impl BuddyPane {
@@ -30,6 +35,7 @@ impl BuddyPane {
         BuddyPane {
             buddy: Buddy::load(),
             next_reload: RELOAD_TICKS,
+            bg: Bg::new(),
         }
     }
 }
@@ -46,10 +52,20 @@ impl super::Pane for BuddyPane {
     }
 
     fn tick(&mut self, frame: u64) {
+        // Pull in a completed background reload, if one landed.
+        if let Some(fresh) = self.bg.take() {
+            self.buddy = fresh;
+        }
+        // Kick off the next reload off-thread when due.
         if frame >= self.next_reload {
-            self.buddy = Buddy::load();
+            self.bg.trigger(Buddy::load);
             self.next_reload = frame.saturating_add(RELOAD_TICKS);
         }
+    }
+
+    fn refresh(&mut self) {
+        // Force the next tick to reload (off-thread; never blocks here).
+        self.next_reload = 0;
     }
 
     fn render(&self, _width: u16, _height: u16, theme: &Theme) -> Vec<Row> {
