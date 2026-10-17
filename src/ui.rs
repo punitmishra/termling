@@ -81,7 +81,10 @@ fn draw_sidebar(f: &mut Frame, dash: &Dashboard, area: Rect, theme: &crate::them
         } else {
             Style::default().fg(theme.accent)
         };
-        lines.push(Line::styled(format!("{marker}{}{suffix}", kind.name()), style));
+        lines.push(Line::styled(
+            format!("{marker}{}{suffix}", kind.name()),
+            style,
+        ));
     }
     lines.push(Line::raw(""));
     lines.push(Line::styled("s split", Style::default().fg(theme.dim)));

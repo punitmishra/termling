@@ -14,6 +14,10 @@
 //! through [`Pane::on_data`]. A pane never blocks and never calls the network
 //! itself.
 
+mod buddy_insights;
+mod git;
+mod system;
+
 use crate::doodle::{Row, Seg};
 use crate::net::{FetchResult, FetchSpec};
 use crate::theme::Theme;
@@ -26,19 +30,33 @@ use ratatui::style::Color;
 pub enum PaneKind {
     /// A built-in welcome / help tile (always present).
     Welcome,
+    /// A local git-repository summary for the current working dir.
+    Git,
+    /// Local machine vitals: load average, uptime, memory.
+    System,
+    /// A read-only window onto the buddy brain's learned habits.
+    BuddyInsights,
 }
 
 impl PaneKind {
     /// The panes available in this build, in sidebar order. Online panes only
     /// appear when compiled `--features online`.
     pub fn all() -> Vec<PaneKind> {
-        vec![PaneKind::Welcome]
+        vec![
+            PaneKind::Welcome,
+            PaneKind::Git,
+            PaneKind::System,
+            PaneKind::BuddyInsights,
+        ]
     }
 
     /// Short sidebar label.
     pub fn name(self) -> &'static str {
         match self {
             PaneKind::Welcome => "welcome",
+            PaneKind::Git => "git",
+            PaneKind::System => "system",
+            PaneKind::BuddyInsights => "buddy",
         }
     }
 
@@ -46,6 +64,9 @@ impl PaneKind {
     pub fn online(self) -> bool {
         match self {
             PaneKind::Welcome => false,
+            PaneKind::Git => false,
+            PaneKind::System => false,
+            PaneKind::BuddyInsights => false,
         }
     }
 
@@ -53,6 +74,9 @@ impl PaneKind {
     pub fn make(self) -> Box<dyn Pane> {
         match self {
             PaneKind::Welcome => Box::new(Welcome),
+            PaneKind::Git => Box::new(git::GitPane::new()),
+            PaneKind::System => Box::new(system::SystemPane::new()),
+            PaneKind::BuddyInsights => Box::new(buddy_insights::BuddyPane::new()),
         }
     }
 }
@@ -162,7 +186,10 @@ impl Dashboard {
 
     /// Collect any fetches the panes want performed this tick (online mode only).
     pub fn poll_fetches(&mut self) -> Vec<FetchSpec> {
-        self.panes.iter_mut().filter_map(|p| p.poll_fetch()).collect()
+        self.panes
+            .iter_mut()
+            .filter_map(|p| p.poll_fetch())
+            .collect()
     }
 
     /// Route a completed fetch to the pane that asked for it.
