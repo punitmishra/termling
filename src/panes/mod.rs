@@ -19,6 +19,15 @@ use crate::net::{FetchResult, FetchSpec};
 use crate::theme::Theme;
 use ratatui::style::Color;
 
+#[cfg(feature = "online")]
+mod devnews;
+#[cfg(feature = "online")]
+mod news;
+#[cfg(feature = "online")]
+mod stocks;
+#[cfg(feature = "online")]
+mod weather;
+
 /// Every pane in the dashboard. Add a variant here (plus a file implementing
 /// [`Pane`]) and wire it into [`ALL`](PaneKind::ALL), [`name`](PaneKind::name),
 /// [`online`](PaneKind::online), and [`make`](PaneKind::make).
@@ -26,19 +35,48 @@ use ratatui::style::Color;
 pub enum PaneKind {
     /// A built-in welcome / help tile (always present).
     Welcome,
+    /// Current conditions from Open-Meteo.
+    #[cfg(feature = "online")]
+    Weather,
+    /// Quotes from Stooq.
+    #[cfg(feature = "online")]
+    Stocks,
+    /// Top stories from Hacker News.
+    #[cfg(feature = "online")]
+    News,
+    /// Hottest stories from Lobsters.
+    #[cfg(feature = "online")]
+    DevNews,
 }
 
 impl PaneKind {
     /// The panes available in this build, in sidebar order. Online panes only
     /// appear when compiled `--features online`.
     pub fn all() -> Vec<PaneKind> {
-        vec![PaneKind::Welcome]
+        #[allow(unused_mut)]
+        let mut kinds = vec![PaneKind::Welcome];
+        #[cfg(feature = "online")]
+        {
+            kinds.push(PaneKind::Weather);
+            kinds.push(PaneKind::Stocks);
+            kinds.push(PaneKind::News);
+            kinds.push(PaneKind::DevNews);
+        }
+        kinds
     }
 
     /// Short sidebar label.
     pub fn name(self) -> &'static str {
         match self {
             PaneKind::Welcome => "welcome",
+            #[cfg(feature = "online")]
+            PaneKind::Weather => "weather",
+            #[cfg(feature = "online")]
+            PaneKind::Stocks => "stocks",
+            #[cfg(feature = "online")]
+            PaneKind::News => "news",
+            #[cfg(feature = "online")]
+            PaneKind::DevNews => "devnews",
         }
     }
 
@@ -46,6 +84,8 @@ impl PaneKind {
     pub fn online(self) -> bool {
         match self {
             PaneKind::Welcome => false,
+            #[cfg(feature = "online")]
+            PaneKind::Weather | PaneKind::Stocks | PaneKind::News | PaneKind::DevNews => true,
         }
     }
 
@@ -53,6 +93,14 @@ impl PaneKind {
     pub fn make(self) -> Box<dyn Pane> {
         match self {
             PaneKind::Welcome => Box::new(Welcome),
+            #[cfg(feature = "online")]
+            PaneKind::Weather => Box::new(weather::Weather::new()),
+            #[cfg(feature = "online")]
+            PaneKind::Stocks => Box::new(stocks::Stocks::new()),
+            #[cfg(feature = "online")]
+            PaneKind::News => Box::new(news::News::new()),
+            #[cfg(feature = "online")]
+            PaneKind::DevNews => Box::new(devnews::DevNews::new()),
         }
     }
 }
@@ -162,7 +210,10 @@ impl Dashboard {
 
     /// Collect any fetches the panes want performed this tick (online mode only).
     pub fn poll_fetches(&mut self) -> Vec<FetchSpec> {
-        self.panes.iter_mut().filter_map(|p| p.poll_fetch()).collect()
+        self.panes
+            .iter_mut()
+            .filter_map(|p| p.poll_fetch())
+            .collect()
     }
 
     /// Route a completed fetch to the pane that asked for it.
@@ -235,9 +286,16 @@ mod tests {
 
     #[test]
     fn local_panes_request_no_network() {
-        // A local pane must not ask the framework to fetch anything.
+        // A local pane must not ask the framework to fetch anything. Online panes
+        // also stay silent unless the user opts in at runtime (TERMLING_ONLINE=1),
+        // which the test environment does not, so no pane fetches here either way.
         let mut dash = Dashboard::new();
         assert!(dash.poll_fetches().is_empty());
+        // The default (zero-network) build carries only offline panes.
+        #[cfg(not(feature = "online"))]
         assert!(PaneKind::all().iter().all(|k| !k.online()));
+        // The online build adds networked panes to the registry.
+        #[cfg(feature = "online")]
+        assert!(PaneKind::all().iter().any(|k| k.online()));
     }
 }
