@@ -33,6 +33,12 @@ seen, cheering a clean build, nudging you after a failure, and noticing when a
 command ran slow *for you*. It learns your workflow entirely on-device —
 **still zero network calls, still no new dependencies.**
 
+Press **`d`** for a **dashboard**: a sidebar of info panes (git status, system
+vitals, buddy stats) — plus optional, off-by-default online panes (weather,
+stocks, news, dev-news, and a Claude "ai tip") that only ever run in an
+`--features online` build with `TERMLING_ONLINE=1`. The stock binary stays
+local-only.
+
 ```
 ┌─ your zsh (100% yours) ────┐┌─termling · focused─┐
 │ ~/proj ❯ git checkout <TAB>││       \ o /        │
@@ -256,6 +262,10 @@ shell's directory, and its last command's result.
 | `TERMLING_AUTOSPAWN` | `0` disables spawning the companion at shell startup |
 | `TERMLING_NOTIFY` | `1` sends a macOS notification when a long command finishes |
 | `TERMLING_PROJECT_THEME` | `1` auto-themes per project directory |
+| `TERMLING_ONLINE` | `1` enables the networked dashboard panes (only in an `--features online` build; off by default) |
+| `TERMLING_WEATHER` | `"lat,lon"` for the weather pane (online) |
+| `TERMLING_STOCKS` | comma-separated tickers for the stocks pane, e.g. `AAPL,MSFT` (online) |
+| `ANTHROPIC_API_KEY` | API key for the Claude "ai tip" pane (online); the pane is inert without it |
 
 ### Persistence
 
@@ -270,13 +280,24 @@ Both are local files; delete them to reset. Neither leaves your machine.
 
 termling is built to be **boring and inspectable** on the security front:
 
-- **The binary makes no network calls, ever.** The shell↔companion link is a
-  local Unix *datagram* socket at
+- **The default binary makes no network calls, ever.** The shell↔companion link
+  is a local Unix *datagram* socket at
   `${XDG_RUNTIME_DIR:-<tmpdir>}/termling-<scope>.sock`. Nothing leaves your
   machine — no telemetry, no analytics, no background update checks, no
   phone-home. `termling update` only *delegates* to `brew`/`cargo` (which fetch)
   at the moment you run it; the network-touching installer is a separate,
-  user-invoked shell script (`scripts/install.sh`), never the binary.
+  user-invoked shell script (`scripts/install.sh`), never the binary. The one
+  exception is opt-in and explicit — see the online-mode bullet below.
+- **Online mode is opt-in and doubly gated.** The networked dashboard panes are
+  compiled only in an `--features online` build **and** run only when you set
+  `TERMLING_ONLINE=1` — both off by default, so a stock build has no network code
+  at all. With both on, termling contacts exactly these hosts, each only for its
+  pane: `api.open-meteo.com` (weather), `stooq.com` (stocks),
+  `hacker-news.firebaseio.com` (news), `lobste.rs` (dev-news), and
+  `api.anthropic.com` (ai tip). The only thing sent is the request itself — your
+  configured coordinates/tickers, and for the ai tip a short fixed prompt plus
+  your `ANTHROPIC_API_KEY` in the request header (never logged, never stored).
+  **No shell data, command text, directories, or telemetry are ever sent.**
 - **It never runs your commands.** The companion is *ambient*: it reads exit
   codes and timings and draws a creature. Your shell input is never piped
   through it, evaluated by it, or otherwise seen by it — only the small event
@@ -289,8 +310,10 @@ termling is built to be **boring and inspectable** on the security front:
   `tmux`, `osascript`/AppleScript (iTerm2, which prompts once for Automation
   permission), `kitten @` (kitty), or `wezterm cli` (WezTerm). Set
   `TERMLING_AUTOSPAWN=0` to disable this entirely and place the pane yourself.
-- **Tiny, auditable dependency surface** — only `ratatui` and `crossterm`; the
-  socket protocol, RNG, games, and themes are all hand-rolled.
+- **Tiny, auditable dependency surface** — a default build uses only `ratatui`
+  and `crossterm`; the socket protocol, RNG, games, and themes are all
+  hand-rolled. The optional `online` feature adds `ureq` (rustls, no OpenSSL) +
+  `serde` + `serde_json` for the networked panes, and nothing else.
 - **Local & single-user by design.** The socket lives in your runtime dir with
   its default permissions; termling assumes a trusted local session and is not
   hardened against hostile local users sharing your `$XDG_RUNTIME_DIR`.
@@ -363,11 +386,14 @@ and a name in `theme.rs` — add one to the `const` array and it joins the rotat
 ## The arcade (mini-games)
 
 Press `g` (or `Enter`) to open the picker (`↑/↓` to choose, `Enter` to play,
-`Esc` back) — handy while a long build churns away in the other pane. Every game
-stars your current character, is tinted by the active theme, speeds up with
-level, and banks its score as XP when you leave. Shared controls: movement on
-`←/→/↑/↓` (or `wasd`, `hjkl`), `Space` to act, `r` to retry after a game over,
-`Esc`/`q` to step out.
+`Esc` back) — handy while a long build churns away in the other pane. In the
+picker, **`d` cycles difficulty** (easy / normal / hard — tuning things like
+spawn rates and starting lives) and **`s` cycles speed** (calm / normal / fast);
+both show on the footer and apply to the game you start. Every game stars your
+current character, is tinted by the active theme, speeds up with level, and banks
+its score as XP when you leave. Shared controls: movement on `←/→/↑/↓` (or
+`wasd`, `hjkl`), `Space` to act, `r` to retry after a game over, `Esc`/`q` to
+step out.
 
 | Game         | Goal |
 |--------------|------|
@@ -416,6 +442,37 @@ It only ever sees the same privacy-filtered tool name the mood engine does (see
 **Privacy**): with `TERMLING_PRIVACY=none` the buddy still cheers and
 commiserates — it just won't name or learn individual tools. The model is a
 bounded few-KB file (see **Persistence**), so it never grows without limit.
+
+## The dashboard
+
+Press **`d`** in the companion to open the **dashboard**: a sidebar of info
+*panes* beside your creature. `↑/↓` pick a pane, `s` toggles a 2×2 split grid
+(several panes at once), `r` refreshes, `esc` returns to the ambient creature.
+
+**Local panes — always available, still zero-network:**
+- **git** — branch, staged/dirty counts, ahead/behind, recent commits (read by
+  running `git`, a subprocess — never the network).
+- **system** — load average, uptime, and memory (from `/proc` on Linux,
+  `sysctl`/`vm_stat` on macOS).
+- **buddy** — a window onto the [buddy brain](#the-buddy-brain): your most-used
+  tools, their success rates, and its next-command prediction.
+
+**Online panes — opt-in, off by default.** Weather (Open-Meteo), stocks (Stooq),
+news (Hacker News), dev-news (Lobsters), and an **ai tip** pane (Claude). These
+are the *only* parts of termling that touch the network, and they take **two
+gates, both off by default**:
+
+1. Build with the feature: `cargo build --features online` (or
+   `cargo install --features online …`). A stock build compiles none of this and
+   pulls no network dependencies.
+2. Opt in at runtime: `TERMLING_ONLINE=1`. Without it, the online panes stay
+   inert and make no requests.
+
+Configure them with `TERMLING_WEATHER="lat,lon"`, `TERMLING_STOCKS="AAPL,MSFT"`,
+and `ANTHROPIC_API_KEY` for the ai tip pane (inert without a key). Fetches run on
+a background thread and are cached with minutes between refreshes, so the UI
+never blocks and the services aren't hammered. Exactly which hosts are contacted,
+and what's sent, is spelled out under **Security** and **Privacy**.
 
 ## The mood engine
 
@@ -469,14 +526,17 @@ combination lights up for free.
 - `doctor.rs`— the `doctor` subcommand: a network-free environment checklist
 - `mood.rs`  — signals → mood
 - `buddy.rs` — the buddy brain: per-tool habits + a Markov bigram learner → toned quips, persisted locally
+- `panes/`   — the dashboard: a `Pane` trait + `PaneKind` registry; local panes (git/system/buddy) always, online panes (weather/stocks/news/dev-news/ai) under `--features online`
+- `net.rs`   — the single network boundary: a background fetch worker + channel, drained non-blocking; real HTTP only under `--features online`
 - `doodle.rs`— characters + mood expressions + scenery → colored ASCII scene
-- `games/`   — the arcade: a `MiniGame` trait plus one module per game
+- `games/`   — the arcade: a `MiniGame` trait plus one module per game (difficulty/speed options)
 - `rng.rs`   — a tiny dependency-free xorshift PRNG
 - `theme.rs` — the switchable chrome/game palettes
-- `ui.rs`    — the single-pane ratatui layout (ambient / arcade / game)
+- `ui.rs`    — the ratatui layout: ambient creature, arcade, game, and the dashboard split
 
-Only two dependencies (`ratatui` + `crossterm`); the socket protocol, games,
-RNG, and themes are all hand-rolled to keep it lightweight.
+Two dependencies by default (`ratatui` + `crossterm`); the socket protocol,
+games, RNG, and themes are all hand-rolled to keep it lightweight. The optional
+`online` feature adds `ureq` + `serde` + `serde_json` for the networked panes.
 
 ## Roadmap
 
