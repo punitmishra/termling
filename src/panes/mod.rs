@@ -372,7 +372,7 @@ impl Pane for Welcome {
             line("termling dashboard", theme.accent),
             line("", theme.dim),
             line("↑/↓  pick a pane", theme.dim),
-            line("s    toggle split grid", theme.dim),
+            line("s    cycle layout", theme.dim),
             line("r    refresh", theme.dim),
             line("esc  back to the creature", theme.dim),
             line("", theme.dim),

@@ -26,17 +26,26 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
 }
 
-/// The info dashboard: a narrow sidebar of pane names on the left, and on the
-/// right the content area tiled per the current [`PaneLayout`] (`s` cycles:
-/// focused → grid → columns → rows).
+/// The info dashboard, laid out like a terminal split: the buddy stays visible in
+/// a compact strip on top, and the dashboard proper sits *under* it — a narrow
+/// sidebar of pane names on the left, the content area tiled per the current
+/// [`PaneLayout`] (`s` cycles: focused → grid → columns → rows) on the right.
 fn draw_dashboard(f: &mut Frame, app: &App, area: Rect) {
+    // Reserve a top band for the creature so it never fully disappears behind the
+    // dashboard; the rest is the dashboard body.
+    let split = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(10), Constraint::Min(0)])
+        .split(area);
+    draw_creature_strip(f, app, split[0]);
+
     let theme = app.theme();
     let dash = app.dashboard();
 
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(16), Constraint::Min(0)])
-        .split(area);
+        .split(split[1]);
     draw_sidebar(f, dash, cols[0], &theme);
 
     let content = cols[1];
@@ -57,6 +66,48 @@ fn draw_dashboard(f: &mut Frame, app: &App, area: Rect) {
 fn window_start(sel: usize, cells: usize) -> usize {
     let n = cells.max(1);
     (sel / n) * n
+}
+
+/// The compact creature band shown atop the dashboard: the current character in
+/// its mood, plus a one-line level/XP/streak HUD — a smaller cousin of the full
+/// ambient view, so the buddy stays in view while you browse panes.
+fn draw_creature_strip(f: &mut Frame, app: &App, area: Rect) {
+    let theme = app.theme();
+    let mood = app.mood();
+    let character = app.current_character();
+    let d = doodle::render(mood, character, app.frame);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" {} · {} ", d.name, mood.label()))
+        .border_style(Style::default().fg(d.border_color));
+
+    let mut lines: Vec<Line> = Vec::new();
+    for row in &d.rows {
+        let spans: Vec<Span> = row
+            .iter()
+            .map(|s| Span::styled(s.text.clone(), Style::default().fg(s.color)))
+            .collect();
+        lines.push(Line::from(spans));
+    }
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("lv {}  ", app.level()),
+            Style::default().fg(theme.accent),
+        ),
+        xp_bar(app.level_progress(), 8, theme.bar),
+        Span::styled(
+            format!("  {}xp · streak {}", app.xp(), app.streak()),
+            Style::default().fg(theme.dim),
+        ),
+    ]));
+
+    f.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .alignment(Alignment::Center),
+        area,
+    );
 }
 
 /// Split the content area into the tiles for a layout: one cell (focused), a 2×2
