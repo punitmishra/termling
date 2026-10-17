@@ -14,7 +14,7 @@ use std::collections::VecDeque;
 
 use serde::Deserialize;
 
-use super::{clip, line, news_count, short, Pane, PaneKind};
+use super::{clip, line, news_count, short, Pane, PaneKind, RefreshTimer};
 use crate::doodle::{Row, Seg};
 use crate::net::{self, FetchResult, FetchSpec};
 use crate::theme::Theme;
@@ -27,9 +27,8 @@ const TOP_URL: &str = "https://hacker-news.firebaseio.com/v0/topstories.json";
 pub struct News {
     /// How many headlines to show (`TERMLING_NEWS_COUNT`, clamped 1..=12).
     want: usize,
-    frame: u64,
-    /// Frame the current cycle's top-list fetch began.
-    fetched_at: Option<u64>,
+    /// Staleness clock: when to start a fresh fetch cycle.
+    timer: RefreshTimer,
     /// A cycle (top list, then items) is in progress.
     cycle_active: bool,
     /// We've received the id list for the current cycle.
@@ -50,8 +49,7 @@ impl News {
     pub fn new() -> News {
         News {
             want: news_count(),
-            frame: 0,
-            fetched_at: None,
+            timer: RefreshTimer::new(REFRESH_FRAMES),
             cycle_active: false,
             have_top: false,
             pending: false,
@@ -63,10 +61,7 @@ impl News {
     }
 
     fn stale(&self) -> bool {
-        match self.fetched_at {
-            None => true,
-            Some(f) => self.frame.saturating_sub(f) >= REFRESH_FRAMES,
-        }
+        self.timer.due()
     }
 }
 
@@ -76,12 +71,12 @@ impl Pane for News {
     }
 
     fn tick(&mut self, frame: u64) {
-        self.frame = frame;
+        self.timer.tick(frame);
     }
 
     fn refresh(&mut self) {
         // Force a fresh cycle on the next poll by marking the cache stale.
-        self.fetched_at = None;
+        self.timer.reset();
     }
 
     fn poll_fetch(&mut self) -> Option<FetchSpec> {
@@ -98,7 +93,7 @@ impl Pane for News {
         }
         if !self.have_top {
             self.pending = true;
-            self.fetched_at = Some(self.frame);
+            self.timer.mark();
             return Some(FetchSpec::get(PaneKind::News, TOP_URL));
         }
         if let Some(id) = self.queue.pop_front() {
@@ -338,8 +333,8 @@ mod tests {
     #[test]
     fn refresh_marks_stale() {
         let mut n = News::new();
-        n.frame = 1;
-        n.fetched_at = Some(1); // just fetched → not stale
+        n.timer.tick(1);
+        n.timer.mark(); // just fetched → not stale
         assert!(!n.stale());
         n.refresh();
         assert!(n.stale()); // `r` forces a fresh cycle

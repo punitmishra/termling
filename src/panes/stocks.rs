@@ -10,7 +10,7 @@
 //! (Stooq's CSV endpoint used to serve this but now 404s, hence Yahoo + the
 //! default `User-Agent` the HTTP agent sends — Yahoo 429s requests without one.)
 
-use super::{line, short, Pane, PaneKind};
+use super::{line, short, Pane, PaneKind, RefreshTimer};
 use crate::doodle::{Row, Seg};
 use crate::net::{self, FetchSpec};
 use crate::theme::Theme;
@@ -32,8 +32,8 @@ struct Quote {
 pub struct Stocks {
     symbols: Vec<String>,
     custom: bool,
-    frame: u64,
-    fetched_at: Option<u64>,
+    /// Staleness clock: when to start a fresh refresh cycle.
+    timer: RefreshTimer,
     /// Symbols still to request this cycle, stored reversed so `pop()` yields the
     /// watchlist's first symbol first (drained one per `poll_fetch`).
     queue: Vec<String>,
@@ -49,8 +49,7 @@ impl Stocks {
         Stocks {
             symbols,
             custom,
-            frame: 0,
-            fetched_at: None,
+            timer: RefreshTimer::new(REFRESH_FRAMES),
             queue: Vec::new(),
             in_flight: false,
             quotes: Vec::new(),
@@ -59,10 +58,7 @@ impl Stocks {
     }
 
     fn due(&self) -> bool {
-        match self.fetched_at {
-            None => true,
-            Some(f) => self.frame.saturating_sub(f) >= REFRESH_FRAMES,
-        }
+        self.timer.due()
     }
 
     /// Upsert a quote by symbol, so a refresh updates in place and the render
@@ -82,12 +78,12 @@ impl Pane for Stocks {
     }
 
     fn tick(&mut self, frame: u64) {
-        self.frame = frame;
+        self.timer.tick(frame);
     }
 
     fn refresh(&mut self) {
         // Mark stale so the next poll starts a fresh cycle.
-        self.fetched_at = None;
+        self.timer.reset();
     }
 
     fn poll_fetch(&mut self) -> Option<FetchSpec> {
@@ -99,7 +95,7 @@ impl Pane for Stocks {
         // and quotes render in that order too (first-seen wins in `store`).
         if self.queue.is_empty() && self.due() {
             self.queue = self.symbols.iter().rev().cloned().collect();
-            self.fetched_at = Some(self.frame);
+            self.timer.mark();
         }
         let symbol = self.queue.pop()?;
         self.in_flight = true;

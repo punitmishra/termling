@@ -8,7 +8,7 @@
 
 use serde::Deserialize;
 
-use super::{clip, line, news_count, short, Pane, PaneKind};
+use super::{clip, line, news_count, short, Pane, PaneKind, RefreshTimer};
 use crate::doodle::{Row, Seg};
 use crate::net::{self, FetchResult, FetchSpec};
 use crate::theme::Theme;
@@ -26,8 +26,8 @@ struct Story {
 pub struct DevNews {
     /// How many stories to show (`TERMLING_NEWS_COUNT`, clamped 1..=12).
     want: usize,
-    frame: u64,
-    fetched_at: Option<u64>,
+    /// Staleness clock: when to re-fetch.
+    timer: RefreshTimer,
     pending: bool,
     stories: Vec<Story>,
     error: Option<String>,
@@ -37,8 +37,7 @@ impl DevNews {
     pub fn new() -> DevNews {
         DevNews {
             want: news_count(),
-            frame: 0,
-            fetched_at: None,
+            timer: RefreshTimer::new(REFRESH_FRAMES),
             pending: false,
             stories: Vec::new(),
             error: None,
@@ -46,10 +45,7 @@ impl DevNews {
     }
 
     fn due(&self) -> bool {
-        match self.fetched_at {
-            None => true,
-            Some(f) => self.frame.saturating_sub(f) >= REFRESH_FRAMES,
-        }
+        self.timer.due()
     }
 }
 
@@ -59,12 +55,12 @@ impl Pane for DevNews {
     }
 
     fn tick(&mut self, frame: u64) {
-        self.frame = frame;
+        self.timer.tick(frame);
     }
 
     fn refresh(&mut self) {
         // Mark the cached stories stale so the next poll re-fetches.
-        self.fetched_at = None;
+        self.timer.reset();
     }
 
     fn poll_fetch(&mut self) -> Option<FetchSpec> {
@@ -72,7 +68,7 @@ impl Pane for DevNews {
             return None;
         }
         self.pending = true;
-        self.fetched_at = Some(self.frame);
+        self.timer.mark();
         Some(FetchSpec::get(PaneKind::DevNews, URL))
     }
 

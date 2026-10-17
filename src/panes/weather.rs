@@ -14,7 +14,7 @@
 
 use serde::Deserialize;
 
-use super::{line, short, Pane, PaneKind};
+use super::{line, short, Pane, PaneKind, RefreshTimer};
 use crate::doodle::Row;
 use crate::net::{self, FetchResult, FetchSpec};
 use crate::theme::Theme;
@@ -42,9 +42,8 @@ pub struct Weather {
     custom_loc: bool,
     /// `TERMLING_WEATHER_UNITS=f` → request & label °F / mph instead of °C / km/h.
     fahrenheit: bool,
-    frame: u64,
-    /// Frame the in-flight/last fetch began; `None` until the first fetch.
-    fetched_at: Option<u64>,
+    /// Staleness clock: when to re-fetch.
+    timer: RefreshTimer,
     /// A request is outstanding — don't queue another until it returns.
     pending: bool,
     reading: Option<Reading>,
@@ -59,8 +58,7 @@ impl Weather {
             lon,
             custom_loc,
             fahrenheit: fahrenheit_requested(),
-            frame: 0,
-            fetched_at: None,
+            timer: RefreshTimer::new(REFRESH_FRAMES),
             pending: false,
             reading: None,
             error: None,
@@ -81,10 +79,7 @@ impl Weather {
     }
 
     fn due(&self) -> bool {
-        match self.fetched_at {
-            None => true,
-            Some(f) => self.frame.saturating_sub(f) >= REFRESH_FRAMES,
-        }
+        self.timer.due()
     }
 }
 
@@ -94,12 +89,12 @@ impl Pane for Weather {
     }
 
     fn tick(&mut self, frame: u64) {
-        self.frame = frame;
+        self.timer.tick(frame);
     }
 
     fn refresh(&mut self) {
         // Mark the cached reading stale so the next poll re-fetches.
-        self.fetched_at = None;
+        self.timer.reset();
     }
 
     fn poll_fetch(&mut self) -> Option<FetchSpec> {
@@ -107,7 +102,7 @@ impl Pane for Weather {
             return None;
         }
         self.pending = true;
-        self.fetched_at = Some(self.frame);
+        self.timer.mark();
         Some(FetchSpec::get(PaneKind::Weather, self.url()))
     }
 
@@ -306,8 +301,8 @@ mod tests {
     #[test]
     fn refresh_marks_due_again() {
         let mut w = Weather::new();
-        w.frame = 1;
-        w.fetched_at = Some(1); // just fetched → not due
+        w.timer.tick(1);
+        w.timer.mark(); // just fetched → not due
         assert!(!w.due());
         w.refresh();
         assert!(w.due()); // `r` forces a re-fetch

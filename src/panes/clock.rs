@@ -76,13 +76,11 @@ impl super::Pane for ClockPane {
     }
 
     fn tick(&mut self, _frame: u64) {
-        // Fold in the offset read, once, when it lands. `Some(None)` means `date`
-        // failed — leave the pane on UTC rather than ever panicking.
-        if let Some(result) = self.bg.take() {
-            if let Some(secs) = result {
-                self.offset_secs = secs;
-                self.offset_known = true;
-            }
+        // Fold in the offset read, once, when it lands. A landed-but-`None` result
+        // means `date` failed — leave the pane on UTC rather than ever panicking.
+        if let Some(Some(secs)) = self.bg.take() {
+            self.offset_secs = secs;
+            self.offset_known = true;
         }
     }
 
@@ -258,8 +256,8 @@ mod tests {
             assert_eq!(civil_from_days(z), (y, m, d), "civil_from_days({z})");
             assert_eq!(days_from_civil(y, m, d), z, "days_from_civil({y}-{m}-{d})");
         }
-        // Epoch is a Thursday (weekday 4 with 0 = Sunday).
-        assert_eq!((0i64 + 4).rem_euclid(7), 4);
+        // Weekday mapping (0 = Sunday): 2021-01-01 was a Friday (5).
+        assert_eq!((days_from_civil(2021, 1, 1) + 4).rem_euclid(7), 5);
     }
 
     #[test]

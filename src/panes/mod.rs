@@ -263,6 +263,55 @@ pub(crate) fn clip(s: &str, max: usize) -> String {
     out
 }
 
+/// The staleness clock shared by the online data panes. Each one advances it
+/// from [`tick`](Pane::tick), asks [`due`](RefreshTimer::due) whether its data
+/// has gone stale, [`mark`](RefreshTimer::mark)s the frame a fetch begins, and
+/// [`reset`](RefreshTimer::reset)s it to force a re-fetch (the `r` key). This is
+/// a behaviour-preserving extraction of the identical `frame`/`fetched_at`/
+/// `due()` trio the panes each used to carry.
+#[cfg(feature = "online")]
+pub(crate) struct RefreshTimer {
+    frame: u64,
+    /// Frame the in-flight/last fetch began; `None` until the first fetch.
+    fetched_at: Option<u64>,
+    /// Frames between refreshes.
+    period: u64,
+}
+
+#[cfg(feature = "online")]
+impl RefreshTimer {
+    pub(crate) fn new(period: u64) -> RefreshTimer {
+        RefreshTimer {
+            frame: 0,
+            fetched_at: None,
+            period,
+        }
+    }
+
+    /// Advance the animation clock (from [`Pane::tick`]).
+    pub(crate) fn tick(&mut self, frame: u64) {
+        self.frame = frame;
+    }
+
+    /// Whether the data is due: never fetched, or the period has elapsed.
+    pub(crate) fn due(&self) -> bool {
+        match self.fetched_at {
+            None => true,
+            Some(f) => self.frame.saturating_sub(f) >= self.period,
+        }
+    }
+
+    /// Stamp the current frame as the moment a fetch began.
+    pub(crate) fn mark(&mut self) {
+        self.fetched_at = Some(self.frame);
+    }
+
+    /// Force the next [`due`](RefreshTimer::due) to be true (the `r` key).
+    pub(crate) fn reset(&mut self) {
+        self.fetched_at = None;
+    }
+}
+
 /// How the dashboard content area is tiled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Layout {
