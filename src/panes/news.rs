@@ -207,24 +207,22 @@ mod tests {
             body: Ok(TOP_SAMPLE.into()),
         });
         assert!(n.have_top);
-        // The sample top list has 8 ids; the default count (6) caps the queue.
-        assert_eq!(n.queue.len(), n.want);
+        // The sample top list has 8 ids; the queue is capped at `want` — assert
+        // against want.min(8) so this holds for any ambient TERMLING_NEWS_COUNT.
+        assert_eq!(n.queue.len(), n.want.min(8));
         assert_eq!(n.queue.front().copied(), Some(38000));
     }
 
     #[test]
-    fn news_count_env_clamps_to_range() {
-        use crate::panes::news_count;
-        std::env::set_var("TERMLING_NEWS_COUNT", "3");
-        assert_eq!(news_count(), 3);
-        std::env::set_var("TERMLING_NEWS_COUNT", "99"); // over the max
-        assert_eq!(news_count(), 12);
-        std::env::set_var("TERMLING_NEWS_COUNT", "0"); // under the min
-        assert_eq!(news_count(), 1);
-        std::env::set_var("TERMLING_NEWS_COUNT", "junk"); // unparseable → default
-        assert_eq!(news_count(), 6);
-        std::env::remove_var("TERMLING_NEWS_COUNT");
-        assert_eq!(news_count(), 6); // unset → default
+    fn news_count_clamps_to_range() {
+        // Test the pure parse+clamp directly — no process-global env mutation, so
+        // this can't race with other tests reading TERMLING_NEWS_COUNT in parallel.
+        use crate::panes::clamp_news_count;
+        assert_eq!(clamp_news_count(Some("3")), 3);
+        assert_eq!(clamp_news_count(Some("99")), 12); // over the max
+        assert_eq!(clamp_news_count(Some("0")), 1); // under the min
+        assert_eq!(clamp_news_count(Some(" junk ")), 6); // unparseable → default
+        assert_eq!(clamp_news_count(None), 6); // unset → default
     }
 
     #[test]

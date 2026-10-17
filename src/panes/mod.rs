@@ -243,9 +243,14 @@ pub(crate) fn short(e: &str) -> String {
 /// Hacker News and Lobsters panes.
 #[cfg(feature = "online")]
 pub(crate) fn news_count() -> usize {
-    std::env::var("TERMLING_NEWS_COUNT")
-        .ok()
-        .and_then(|v| v.trim().parse::<usize>().ok())
+    clamp_news_count(std::env::var("TERMLING_NEWS_COUNT").ok().as_deref())
+}
+
+/// The pure parse+clamp behind [`news_count`] — split out so it can be tested
+/// without mutating the process-global env (which races with parallel tests).
+#[cfg(feature = "online")]
+pub(crate) fn clamp_news_count(raw: Option<&str>) -> usize {
+    raw.and_then(|v| v.trim().parse::<usize>().ok())
         .unwrap_or(6)
         .clamp(1, 12)
 }
