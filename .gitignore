@@ -10,3 +10,6 @@
 # editor cruft
 *.swp
 *~
+
+# Local git worktrees used for parallel workstreams
+.claude/worktrees/

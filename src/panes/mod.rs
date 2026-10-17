@@ -23,6 +23,15 @@ use crate::net::{FetchResult, FetchSpec};
 use crate::theme::Theme;
 use ratatui::style::Color;
 
+#[cfg(feature = "online")]
+mod devnews;
+#[cfg(feature = "online")]
+mod news;
+#[cfg(feature = "online")]
+mod stocks;
+#[cfg(feature = "online")]
+mod weather;
+
 /// Every pane in the dashboard. Add a variant here (plus a file implementing
 /// [`Pane`]) and wire it into [`ALL`](PaneKind::ALL), [`name`](PaneKind::name),
 /// [`online`](PaneKind::online), and [`make`](PaneKind::make).
@@ -36,18 +45,39 @@ pub enum PaneKind {
     System,
     /// A read-only window onto the buddy brain's learned habits.
     BuddyInsights,
+    /// Current conditions from Open-Meteo.
+    #[cfg(feature = "online")]
+    Weather,
+    /// Quotes from Stooq.
+    #[cfg(feature = "online")]
+    Stocks,
+    /// Top stories from Hacker News.
+    #[cfg(feature = "online")]
+    News,
+    /// Hottest stories from Lobsters.
+    #[cfg(feature = "online")]
+    DevNews,
 }
 
 impl PaneKind {
     /// The panes available in this build, in sidebar order. Online panes only
     /// appear when compiled `--features online`.
     pub fn all() -> Vec<PaneKind> {
-        vec![
+        #[allow(unused_mut)]
+        let mut kinds = vec![
             PaneKind::Welcome,
             PaneKind::Git,
             PaneKind::System,
             PaneKind::BuddyInsights,
-        ]
+        ];
+        #[cfg(feature = "online")]
+        {
+            kinds.push(PaneKind::Weather);
+            kinds.push(PaneKind::Stocks);
+            kinds.push(PaneKind::News);
+            kinds.push(PaneKind::DevNews);
+        }
+        kinds
     }
 
     /// Short sidebar label.
@@ -57,6 +87,14 @@ impl PaneKind {
             PaneKind::Git => "git",
             PaneKind::System => "system",
             PaneKind::BuddyInsights => "buddy",
+            #[cfg(feature = "online")]
+            PaneKind::Weather => "weather",
+            #[cfg(feature = "online")]
+            PaneKind::Stocks => "stocks",
+            #[cfg(feature = "online")]
+            PaneKind::News => "news",
+            #[cfg(feature = "online")]
+            PaneKind::DevNews => "devnews",
         }
     }
 
@@ -67,6 +105,8 @@ impl PaneKind {
             PaneKind::Git => false,
             PaneKind::System => false,
             PaneKind::BuddyInsights => false,
+            #[cfg(feature = "online")]
+            PaneKind::Weather | PaneKind::Stocks | PaneKind::News | PaneKind::DevNews => true,
         }
     }
 
@@ -77,6 +117,14 @@ impl PaneKind {
             PaneKind::Git => Box::new(git::GitPane::new()),
             PaneKind::System => Box::new(system::SystemPane::new()),
             PaneKind::BuddyInsights => Box::new(buddy_insights::BuddyPane::new()),
+            #[cfg(feature = "online")]
+            PaneKind::Weather => Box::new(weather::Weather::new()),
+            #[cfg(feature = "online")]
+            PaneKind::Stocks => Box::new(stocks::Stocks::new()),
+            #[cfg(feature = "online")]
+            PaneKind::News => Box::new(news::News::new()),
+            #[cfg(feature = "online")]
+            PaneKind::DevNews => Box::new(devnews::DevNews::new()),
         }
     }
 }
@@ -262,9 +310,16 @@ mod tests {
 
     #[test]
     fn local_panes_request_no_network() {
-        // A local pane must not ask the framework to fetch anything.
+        // A local pane must not ask the framework to fetch anything. Online panes
+        // also stay silent unless the user opts in at runtime (TERMLING_ONLINE=1),
+        // which the test environment does not, so no pane fetches here either way.
         let mut dash = Dashboard::new();
         assert!(dash.poll_fetches().is_empty());
+        // The default (zero-network) build carries only offline panes.
+        #[cfg(not(feature = "online"))]
         assert!(PaneKind::all().iter().all(|k| !k.online()));
+        // The online build adds networked panes to the registry.
+        #[cfg(feature = "online")]
+        assert!(PaneKind::all().iter().any(|k| k.online()));
     }
 }
