@@ -19,6 +19,9 @@ use crate::net::{FetchResult, FetchSpec};
 use crate::theme::Theme;
 use ratatui::style::Color;
 
+#[cfg(feature = "online")]
+mod ai;
+
 /// Every pane in the dashboard. Add a variant here (plus a file implementing
 /// [`Pane`]) and wire it into [`ALL`](PaneKind::ALL), [`name`](PaneKind::name),
 /// [`online`](PaneKind::online), and [`make`](PaneKind::make).
@@ -26,19 +29,29 @@ use ratatui::style::Color;
 pub enum PaneKind {
     /// A built-in welcome / help tile (always present).
     Welcome,
+    /// A Claude-backed tip tile (only with `--features online`).
+    #[cfg(feature = "online")]
+    Ai,
 }
 
 impl PaneKind {
     /// The panes available in this build, in sidebar order. Online panes only
     /// appear when compiled `--features online`.
     pub fn all() -> Vec<PaneKind> {
-        vec![PaneKind::Welcome]
+        // `mut` is used only when the `online` feature adds a pane below.
+        #[allow(unused_mut)]
+        let mut kinds = vec![PaneKind::Welcome];
+        #[cfg(feature = "online")]
+        kinds.push(PaneKind::Ai);
+        kinds
     }
 
     /// Short sidebar label.
     pub fn name(self) -> &'static str {
         match self {
             PaneKind::Welcome => "welcome",
+            #[cfg(feature = "online")]
+            PaneKind::Ai => "ai tip",
         }
     }
 
@@ -46,6 +59,8 @@ impl PaneKind {
     pub fn online(self) -> bool {
         match self {
             PaneKind::Welcome => false,
+            #[cfg(feature = "online")]
+            PaneKind::Ai => true,
         }
     }
 
@@ -53,6 +68,8 @@ impl PaneKind {
     pub fn make(self) -> Box<dyn Pane> {
         match self {
             PaneKind::Welcome => Box::new(Welcome),
+            #[cfg(feature = "online")]
+            PaneKind::Ai => Box::new(ai::Ai::new()),
         }
     }
 }
@@ -162,7 +179,10 @@ impl Dashboard {
 
     /// Collect any fetches the panes want performed this tick (online mode only).
     pub fn poll_fetches(&mut self) -> Vec<FetchSpec> {
-        self.panes.iter_mut().filter_map(|p| p.poll_fetch()).collect()
+        self.panes
+            .iter_mut()
+            .filter_map(|p| p.poll_fetch())
+            .collect()
     }
 
     /// Route a completed fetch to the pane that asked for it.
@@ -235,9 +255,15 @@ mod tests {
 
     #[test]
     fn local_panes_request_no_network() {
-        // A local pane must not ask the framework to fetch anything.
-        let mut dash = Dashboard::new();
-        assert!(dash.poll_fetches().is_empty());
+        // A *local* pane must never ask the framework to fetch anything — build
+        // each one directly so the check is independent of the environment (an
+        // online pane may legitimately want the network when a key is present).
+        for kind in PaneKind::all().into_iter().filter(|k| !k.online()) {
+            let mut pane = kind.make();
+            assert!(pane.poll_fetch().is_none(), "{} fetched", kind.name());
+        }
+        // The default (no `online`) build has no networked panes at all.
+        #[cfg(not(feature = "online"))]
         assert!(PaneKind::all().iter().all(|k| !k.online()));
     }
 }
