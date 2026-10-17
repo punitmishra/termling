@@ -31,6 +31,8 @@ mod news;
 mod stocks;
 #[cfg(feature = "online")]
 mod weather;
+#[cfg(feature = "online")]
+mod ai;
 
 /// Every pane in the dashboard. Add a variant here (plus a file implementing
 /// [`Pane`]) and wire it into [`ALL`](PaneKind::ALL), [`name`](PaneKind::name),
@@ -57,6 +59,9 @@ pub enum PaneKind {
     /// Hottest stories from Lobsters.
     #[cfg(feature = "online")]
     DevNews,
+    /// A Claude-backed tip tile (only with `--features online`).
+    #[cfg(feature = "online")]
+    Ai,
 }
 
 impl PaneKind {
@@ -76,6 +81,7 @@ impl PaneKind {
             kinds.push(PaneKind::Stocks);
             kinds.push(PaneKind::News);
             kinds.push(PaneKind::DevNews);
+            kinds.push(PaneKind::Ai);
         }
         kinds
     }
@@ -95,6 +101,8 @@ impl PaneKind {
             PaneKind::News => "news",
             #[cfg(feature = "online")]
             PaneKind::DevNews => "devnews",
+            #[cfg(feature = "online")]
+            PaneKind::Ai => "ai tip",
         }
     }
 
@@ -106,7 +114,11 @@ impl PaneKind {
             PaneKind::System => false,
             PaneKind::BuddyInsights => false,
             #[cfg(feature = "online")]
-            PaneKind::Weather | PaneKind::Stocks | PaneKind::News | PaneKind::DevNews => true,
+            PaneKind::Weather
+            | PaneKind::Stocks
+            | PaneKind::News
+            | PaneKind::DevNews
+            | PaneKind::Ai => true,
         }
     }
 
@@ -125,6 +137,8 @@ impl PaneKind {
             PaneKind::News => Box::new(news::News::new()),
             #[cfg(feature = "online")]
             PaneKind::DevNews => Box::new(devnews::DevNews::new()),
+            #[cfg(feature = "online")]
+            PaneKind::Ai => Box::new(ai::Ai::new()),
         }
     }
 }
@@ -310,12 +324,14 @@ mod tests {
 
     #[test]
     fn local_panes_request_no_network() {
-        // A local pane must not ask the framework to fetch anything. Online panes
-        // also stay silent unless the user opts in at runtime (TERMLING_ONLINE=1),
-        // which the test environment does not, so no pane fetches here either way.
-        let mut dash = Dashboard::new();
-        assert!(dash.poll_fetches().is_empty());
-        // The default (zero-network) build carries only offline panes.
+        // A *local* pane must never ask the framework to fetch anything — build
+        // each one directly so the check is independent of the environment (an
+        // online pane may legitimately want the network when a key is present).
+        for kind in PaneKind::all().into_iter().filter(|k| !k.online()) {
+            let mut pane = kind.make();
+            assert!(pane.poll_fetch().is_none(), "{} fetched", kind.name());
+        }
+        // The default (no `online`) build has no networked panes at all.
         #[cfg(not(feature = "online"))]
         assert!(PaneKind::all().iter().all(|k| !k.online()));
         // The online build adds networked panes to the registry.
