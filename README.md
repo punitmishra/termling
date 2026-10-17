@@ -265,6 +265,7 @@ shell's directory, and its last command's result.
 | `TERMLING_ONLINE` | `1` enables the networked dashboard panes (only in an `--features online` build; off by default) |
 | `TERMLING_WEATHER` | `"lat,lon"` for the weather pane (online) |
 | `TERMLING_STOCKS` | comma-separated tickers for the stocks pane, e.g. `AAPL,MSFT` (online) |
+| `TERMLING_PANES` | pick & order dashboard panes, e.g. `git,weather,ai`; unknown/unavailable names are skipped (default: all) |
 | `ANTHROPIC_API_KEY` | API key for the Claude "ai tip" pane (online); the pane is inert without it |
 
 ### Persistence
@@ -292,7 +293,7 @@ termling is built to be **boring and inspectable** on the security front:
   compiled only in an `--features online` build **and** run only when you set
   `TERMLING_ONLINE=1` — both off by default, so a stock build has no network code
   at all. With both on, termling contacts exactly these hosts, each only for its
-  pane: `api.open-meteo.com` (weather), `stooq.com` (stocks),
+  pane: `api.open-meteo.com` (weather), `query1.finance.yahoo.com` (stocks),
   `hacker-news.firebaseio.com` (news), `lobste.rs` (dev-news), and
   `api.anthropic.com` (ai tip). The only thing sent is the request itself — your
   configured coordinates/tickers, and for the ai tip a short fixed prompt plus
@@ -446,8 +447,11 @@ bounded few-KB file (see **Persistence**), so it never grows without limit.
 ## The dashboard
 
 Press **`d`** in the companion to open the **dashboard**: a sidebar of info
-*panes* beside your creature. `↑/↓` pick a pane, `s` toggles a 2×2 split grid
-(several panes at once), `r` refreshes, `esc` returns to the ambient creature.
+*panes* beside your creature. `↑/↓` pick a pane, **`s` cycles the layout**
+(focused → grid → columns → rows — a 2×2 grid, a vertical split, or a horizontal
+split, windowed on the selection), `r` refreshes, `esc` returns to the creature.
+Choose and order which panes appear with `TERMLING_PANES` (e.g.
+`TERMLING_PANES=git,weather,ai`).
 
 **Local panes — always available, still zero-network:**
 - **git** — branch, staged/dirty counts, ahead/behind, recent commits (read by
@@ -457,8 +461,8 @@ Press **`d`** in the companion to open the **dashboard**: a sidebar of info
 - **buddy** — a window onto the [buddy brain](#the-buddy-brain): your most-used
   tools, their success rates, and its next-command prediction.
 
-**Online panes — opt-in, off by default.** Weather (Open-Meteo), stocks (Stooq),
-news (Hacker News), dev-news (Lobsters), and an **ai tip** pane (Claude). These
+**Online panes — opt-in, off by default.** Weather (Open-Meteo), stocks (Yahoo
+Finance), news (Hacker News), dev-news (Lobsters), and an **ai tip** pane (Claude). These
 are the *only* parts of termling that touch the network, and they take **two
 gates, both off by default**:
 

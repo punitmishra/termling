@@ -1,20 +1,21 @@
-//! A quotes pane backed by [Stooq](https://stooq.com/)'s light CSV endpoint.
+//! A quotes pane backed by Yahoo Finance's key-less `v8/finance/chart` endpoint.
 //!
-//! Stooq serves a key-less CSV for a comma-separated list of symbols; we ask
-//! for `s`ymbol, `d`ate, `t`ime, `o`pen/`h`igh/`l`ow/`c`lose and `v`olume. The
-//! watchlist comes from `TERMLING_STOCKS="AAPL,MSFT"`, defaulting to a couple of
-//! well-known tickers. We show the last price and the day's change (close minus
-//! open), colored up/down.
+//! We fetch one symbol per request (cycling through the watchlist, one per tick)
+//! and read `regularMarketPrice` + `chartPreviousClose` from the response's
+//! `meta`. Each response carries its own `symbol`, so results route back by the
+//! ticker in the payload — no per-symbol request tagging needed. The watchlist
+//! comes from `TERMLING_STOCKS="AAPL,MSFT"`, defaulting to a couple of tickers.
+//! We show the last price and the day's change, colored up/down.
 //!
-//! The CSV is trivial, so we parse it by hand rather than pull in a CSV crate.
+//! (Stooq's CSV endpoint used to serve this but now 404s, hence Yahoo + the
+//! default `User-Agent` the HTTP agent sends — Yahoo 429s requests without one.)
 
 use super::{line, Pane, PaneKind};
 use crate::doodle::{Row, Seg};
 use crate::net::{self, FetchSpec};
 use crate::theme::Theme;
 
-/// Frames between refreshes (~5 min at the dashboard's ~10 ticks/second). Quotes
-/// move, but Stooq is a courtesy endpoint — polling harder would be rude.
+/// Frames between refresh cycles (~5 min at the dashboard's ~10 ticks/second).
 const REFRESH_FRAMES: u64 = 5 * 60 * 10;
 
 /// Default watchlist when `TERMLING_STOCKS` is unset.
@@ -23,7 +24,7 @@ const DEFAULT_SYMBOLS: &str = "AAPL,MSFT";
 /// One parsed quote.
 struct Quote {
     symbol: String,
-    close: f64,
+    price: f64,
     change: f64,
     change_pct: f64,
 }
@@ -33,7 +34,10 @@ pub struct Stocks {
     custom: bool,
     frame: u64,
     fetched_at: Option<u64>,
-    pending: bool,
+    /// Symbols still to request this cycle (drained one per `poll_fetch`).
+    queue: Vec<String>,
+    /// True while a single request is in flight (one at a time).
+    in_flight: bool,
     quotes: Vec<Quote>,
     error: Option<String>,
 }
@@ -46,27 +50,27 @@ impl Stocks {
             custom,
             frame: 0,
             fetched_at: None,
-            pending: false,
+            queue: Vec::new(),
+            in_flight: false,
             quotes: Vec::new(),
             error: None,
         }
-    }
-
-    fn url(&self) -> String {
-        // `AAPL,MSFT` -> `aapl.us,msft.us`
-        let list = self
-            .symbols
-            .iter()
-            .map(|s| format!("{}.us", s.to_lowercase()))
-            .collect::<Vec<_>>()
-            .join(",");
-        format!("https://stooq.com/q/l/?s={list}&f=sd2t2ohlcv&h&e=csv")
     }
 
     fn due(&self) -> bool {
         match self.fetched_at {
             None => true,
             Some(f) => self.frame.saturating_sub(f) >= REFRESH_FRAMES,
+        }
+    }
+
+    /// Upsert a quote by symbol, so a refresh updates in place and the render
+    /// order follows the configured watchlist.
+    fn store(&mut self, q: Quote) {
+        if let Some(slot) = self.quotes.iter_mut().find(|e| e.symbol == q.symbol) {
+            *slot = q;
+        } else {
+            self.quotes.push(q);
         }
     }
 }
@@ -81,32 +85,41 @@ impl Pane for Stocks {
     }
 
     fn refresh(&mut self) {
-        // Mark the cached quotes stale so the next poll re-fetches.
+        // Mark stale so the next poll starts a fresh cycle.
         self.fetched_at = None;
     }
 
     fn poll_fetch(&mut self) -> Option<FetchSpec> {
-        if !net::online_enabled() || self.pending || !self.due() {
+        if !net::online_enabled() || self.in_flight {
             return None;
         }
-        self.pending = true;
-        self.fetched_at = Some(self.frame);
-        Some(FetchSpec::get(PaneKind::Stocks, self.url()))
+        // Start a new cycle when the data is due and we're not mid-cycle.
+        if self.queue.is_empty() && self.due() {
+            self.queue = self.symbols.clone();
+            self.fetched_at = Some(self.frame);
+        }
+        let symbol = self.queue.pop()?;
+        self.in_flight = true;
+        let url = format!(
+            "https://query1.finance.yahoo.com/v8/finance/chart/{}?interval=1d&range=1d",
+            symbol
+        );
+        Some(FetchSpec::get(PaneKind::Stocks, url))
     }
 
     fn on_data(&mut self, result: &crate::net::FetchResult) {
-        self.pending = false;
+        self.in_flight = false;
         match &result.body {
             Err(e) => self.error = Some(short(e)),
-            Ok(body) => {
-                let quotes = parse_csv(body);
-                if quotes.is_empty() {
-                    self.error = Some("no quotes".into());
-                } else {
-                    self.quotes = quotes;
+            Ok(body) => match parse_quote(body) {
+                Ok(q) => {
+                    self.store(q);
                     self.error = None;
                 }
-            }
+                // A single bad symbol response shouldn't wipe the others.
+                Err(e) if self.quotes.is_empty() => self.error = Some(e),
+                Err(_) => {}
+            },
         }
     }
 
@@ -126,7 +139,7 @@ impl Pane for Stocks {
                         color: theme.accent,
                     },
                     Seg {
-                        text: format!("{:>9.2}  ", q.close),
+                        text: format!("{:>9.2}  ", q.price),
                         color: theme.dim,
                     },
                     Seg {
@@ -165,45 +178,40 @@ fn parse_symbols() -> (Vec<String>, bool) {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>();
     if symbols.is_empty() {
-        (vec![DEFAULT_SYMBOLS.to_string()], false)
+        (vec!["AAPL".to_string(), "MSFT".to_string()], false)
     } else {
         (symbols, custom)
     }
 }
 
-/// Parse Stooq's `sd2t2ohlcv` CSV (with header). Rows whose price fields are
-/// missing (`N/D`) or malformed are skipped. Change is close − open.
-fn parse_csv(body: &str) -> Vec<Quote> {
-    let mut out = Vec::new();
-    for raw in body.lines().skip(1) {
-        let line = raw.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let f: Vec<&str> = line.split(',').collect();
-        // Symbol, Date, Time, Open, High, Low, Close, Volume
-        if f.len() < 7 {
-            continue;
-        }
-        let symbol = f[0].trim().trim_end_matches(".US").trim_end_matches(".us");
-        let (open, close) = match (f[3].trim().parse::<f64>(), f[6].trim().parse::<f64>()) {
-            (Ok(o), Ok(c)) => (o, c),
-            _ => continue,
-        };
-        let change = close - open;
-        let change_pct = if open != 0.0 {
-            change / open * 100.0
-        } else {
-            0.0
-        };
-        out.push(Quote {
-            symbol: symbol.to_string(),
-            close,
-            change,
-            change_pct,
-        });
+/// Parse one Yahoo `v8/finance/chart` response into a [`Quote`] via its `meta`
+/// block. Returns a short error string on an API error or missing fields.
+fn parse_quote(body: &str) -> Result<Quote, String> {
+    let v: serde_json::Value = serde_json::from_str(body).map_err(|e| short(&e.to_string()))?;
+    let chart = &v["chart"];
+    if !chart["error"].is_null() {
+        return Err("api error".into());
     }
-    out
+    let meta = &chart["result"][0]["meta"];
+    let symbol = meta["symbol"].as_str().ok_or("no symbol")?.to_string();
+    let price = meta["regularMarketPrice"].as_f64().ok_or("no price")?;
+    // Fall back to previousClose if chartPreviousClose is absent.
+    let prev = meta["chartPreviousClose"]
+        .as_f64()
+        .or_else(|| meta["previousClose"].as_f64())
+        .unwrap_or(price);
+    let change = price - prev;
+    let change_pct = if prev != 0.0 {
+        change / prev * 100.0
+    } else {
+        0.0
+    };
+    Ok(Quote {
+        symbol,
+        price,
+        change,
+        change_pct,
+    })
 }
 
 fn short(e: &str) -> String {
@@ -216,9 +224,10 @@ mod tests {
     use super::*;
     use crate::theme::THEMES;
 
-    const SAMPLE: &str = "Symbol,Date,Time,Open,High,Low,Close,Volume\n\
-        AAPL.US,2024-01-02,22:00:05,187.15,188.44,183.89,185.64,82488200\n\
-        MSFT.US,2024-01-02,22:00:06,373.86,375.00,366.50,370.87,25258600\n";
+    // A trimmed-but-real-shaped v8 chart response.
+    const SAMPLE_AAPL: &str = r#"{"chart":{"result":[{"meta":{"currency":"USD",
+        "symbol":"AAPL","regularMarketPrice":185.64,"chartPreviousClose":187.15}}],
+        "error":null}}"#;
 
     fn text(rows: &[Row]) -> String {
         rows.iter()
@@ -228,42 +237,48 @@ mod tests {
     }
 
     #[test]
-    fn parses_two_rows_with_signed_change() {
-        let q = parse_csv(SAMPLE);
-        assert_eq!(q.len(), 2);
-        assert_eq!(q[0].symbol, "AAPL");
-        assert_eq!(q[0].close, 185.64);
+    fn parses_price_and_signed_change() {
+        let q = parse_quote(SAMPLE_AAPL).expect("parse");
+        assert_eq!(q.symbol, "AAPL");
+        assert_eq!(q.price, 185.64);
         // 185.64 - 187.15 = -1.51 (down day)
-        assert!(
-            (q[0].change - (-1.51)).abs() < 1e-6,
-            "change {}",
-            q[0].change
-        );
-        assert!(q[0].change < 0.0);
-        assert!(q[1].change < 0.0);
+        assert!((q.change - (-1.51)).abs() < 1e-6, "change {}", q.change);
+        assert!(q.change < 0.0);
     }
 
     #[test]
-    fn skips_missing_and_short_rows() {
-        let body = "Symbol,Date,Time,Open,High,Low,Close,Volume\n\
-            BAD.US,2024-01-02,22:00:05,N/D,N/D,N/D,N/D,N/D\n\
-            short,row\n\
-            GOOG.US,2024-01-02,22:00:05,140.00,142.00,139.00,141.50,1000\n";
-        let q = parse_csv(body);
-        assert_eq!(q.len(), 1);
-        assert_eq!(q[0].symbol, "GOOG");
+    fn api_error_and_garbage_are_errors_not_panics() {
+        assert!(parse_quote(r#"{"chart":{"result":null,"error":{"code":"x"}}}"#).is_err());
+        assert!(parse_quote("not json").is_err());
+        assert!(parse_quote("{}").is_err());
     }
 
     #[test]
-    fn renders_prices_and_change() {
+    fn renders_price_and_change() {
         let mut s = Stocks::new();
         s.on_data(&crate::net::FetchResult {
             pane: PaneKind::Stocks,
-            body: Ok(SAMPLE.into()),
+            body: Ok(SAMPLE_AAPL.into()),
         });
         let out = text(&s.render(40, 12, &THEMES[0]));
         assert!(out.contains("AAPL"), "symbol: {out}");
         assert!(out.contains("185.64"), "price: {out}");
         assert!(out.contains("-1.51"), "change: {out}");
+    }
+
+    #[test]
+    fn one_bad_response_keeps_existing_quotes() {
+        let mut s = Stocks::new();
+        s.on_data(&crate::net::FetchResult {
+            pane: PaneKind::Stocks,
+            body: Ok(SAMPLE_AAPL.into()),
+        });
+        // A later garbage response must not wipe the good AAPL quote.
+        s.on_data(&crate::net::FetchResult {
+            pane: PaneKind::Stocks,
+            body: Ok("garbage".into()),
+        });
+        assert_eq!(s.quotes.len(), 1);
+        assert_eq!(s.quotes[0].symbol, "AAPL");
     }
 }

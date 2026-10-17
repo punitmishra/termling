@@ -449,8 +449,8 @@ impl App {
         self.dashboard.next();
     }
 
-    pub fn dashboard_toggle_split(&mut self) {
-        self.dashboard.toggle_split();
+    pub fn dashboard_cycle_layout(&mut self) {
+        self.dashboard.cycle_layout();
     }
 
     /// Force every pane to recollect / re-fetch. Works offline too: local panes

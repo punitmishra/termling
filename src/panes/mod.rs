@@ -87,6 +87,29 @@ impl PaneKind {
         kinds
     }
 
+    /// Resolve a pane by its [`name`](PaneKind::name) — for `TERMLING_PANES`.
+    /// Returns `None` for unknown names and for online panes in a build without
+    /// the `online` feature, so configuration silently skips what isn't available.
+    pub fn from_name(name: &str) -> Option<PaneKind> {
+        match name {
+            "welcome" => Some(PaneKind::Welcome),
+            "git" => Some(PaneKind::Git),
+            "system" => Some(PaneKind::System),
+            "buddy" => Some(PaneKind::BuddyInsights),
+            #[cfg(feature = "online")]
+            "weather" => Some(PaneKind::Weather),
+            #[cfg(feature = "online")]
+            "stocks" => Some(PaneKind::Stocks),
+            #[cfg(feature = "online")]
+            "news" => Some(PaneKind::News),
+            #[cfg(feature = "online")]
+            "devnews" => Some(PaneKind::DevNews),
+            #[cfg(feature = "online")]
+            "ai" | "ai tip" => Some(PaneKind::Ai),
+            _ => None,
+        }
+    }
+
     /// Short sidebar label.
     pub fn name(self) -> &'static str {
         match self {
@@ -172,6 +195,22 @@ pub trait Pane {
     fn on_data(&mut self, _result: &FetchResult) {}
 }
 
+/// The panes to show, in order. `TERMLING_PANES` (a comma-separated list of pane
+/// names, e.g. `git,weather,ai`) picks and orders them; unknown or unavailable
+/// names are skipped. Unset or empty → the full default set ([`PaneKind::all`]).
+fn configured_kinds() -> Vec<PaneKind> {
+    if let Ok(spec) = std::env::var("TERMLING_PANES") {
+        let chosen: Vec<PaneKind> = spec
+            .split(',')
+            .filter_map(|n| PaneKind::from_name(n.trim()))
+            .collect();
+        if !chosen.is_empty() {
+            return chosen;
+        }
+    }
+    PaneKind::all()
+}
+
 /// Build a one-line [`Row`] of a single color — the common case for text panes.
 pub fn line(text: impl Into<String>, color: Color) -> Row {
     vec![Seg {
@@ -180,26 +219,67 @@ pub fn line(text: impl Into<String>, color: Color) -> Row {
     }]
 }
 
-/// The dashboard: the set of live panes, the sidebar selection, and whether we're
-/// showing one focused pane or a grid of several. Lives on
-/// [`App`](crate::app::App) like the arcade game does.
+/// How the dashboard content area is tiled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Layout {
+    /// One pane fills the content area.
+    Focused,
+    /// A 2×2 grid.
+    Grid,
+    /// Panes side by side (vertical dividers).
+    Columns,
+    /// Panes stacked (horizontal dividers).
+    Rows,
+}
+
+impl Layout {
+    /// Cycle order for the `s` key.
+    pub fn next(self) -> Layout {
+        match self {
+            Layout::Focused => Layout::Grid,
+            Layout::Grid => Layout::Columns,
+            Layout::Columns => Layout::Rows,
+            Layout::Rows => Layout::Focused,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Layout::Focused => "focused",
+            Layout::Grid => "grid",
+            Layout::Columns => "columns",
+            Layout::Rows => "rows",
+        }
+    }
+
+    /// How many panes this layout shows at once (a window around the selection).
+    pub fn cells(self) -> usize {
+        match self {
+            Layout::Focused => 1,
+            Layout::Grid => 4,
+            Layout::Columns | Layout::Rows => 3,
+        }
+    }
+}
+
+/// The dashboard: the set of live panes, the sidebar selection, and how the
+/// content area is tiled. Lives on [`App`](crate::app::App) like the arcade game.
 pub struct Dashboard {
     kinds: Vec<PaneKind>,
     panes: Vec<Box<dyn Pane>>,
     sel: usize,
-    /// False → one focused pane fills the content area; true → a grid of panes.
-    split: bool,
+    layout: Layout,
 }
 
 impl Dashboard {
     pub fn new() -> Dashboard {
-        let kinds = PaneKind::all();
+        let kinds = configured_kinds();
         let panes = kinds.iter().map(|k| k.make()).collect();
         Dashboard {
             kinds,
             panes,
             sel: 0,
-            split: false,
+            layout: Layout::Focused,
         }
     }
 
@@ -211,12 +291,13 @@ impl Dashboard {
         self.sel
     }
 
-    pub fn split(&self) -> bool {
-        self.split
+    pub fn layout(&self) -> Layout {
+        self.layout
     }
 
-    pub fn toggle_split(&mut self) {
-        self.split = !self.split;
+    /// Step to the next content layout (the `s` key).
+    pub fn cycle_layout(&mut self) {
+        self.layout = self.layout.next();
     }
 
     pub fn next(&mut self) {
@@ -230,11 +311,6 @@ impl Dashboard {
             let n = self.panes.len();
             self.sel = (self.sel + n - 1) % n;
         }
-    }
-
-    /// The currently-selected pane.
-    pub fn focused(&self) -> Option<&dyn Pane> {
-        self.panes.get(self.sel).map(|b| b.as_ref())
     }
 
     /// All panes paired with their kind, for grid rendering.
@@ -315,24 +391,38 @@ mod tests {
     fn dashboard_starts_with_the_welcome_pane_and_renders() {
         let dash = Dashboard::new();
         assert_eq!(dash.sel(), 0);
-        assert!(!dash.split());
-        let pane = dash.focused().expect("a focused pane");
+        assert_eq!(dash.layout(), Layout::Focused);
+        let (_, pane) = dash.all().next().expect("a pane");
         assert_eq!(pane.title(), "welcome");
         let rows = pane.render(40, 12, &THEMES[0]);
         assert!(!rows.is_empty());
     }
 
     #[test]
-    fn sidebar_navigation_wraps_and_split_toggles() {
+    fn sidebar_navigation_wraps_and_layout_cycles() {
         let mut dash = Dashboard::new();
         let n = dash.kinds().len();
         dash.prev(); // wrap backwards from 0
         assert_eq!(dash.sel(), n - 1);
         dash.next(); // back to 0
         assert_eq!(dash.sel(), 0);
-        assert!(!dash.split());
-        dash.toggle_split();
-        assert!(dash.split());
+        // Layout cycles focused → grid → columns → rows → focused.
+        assert_eq!(dash.layout(), Layout::Focused);
+        dash.cycle_layout();
+        assert_eq!(dash.layout(), Layout::Grid);
+        dash.cycle_layout();
+        assert_eq!(dash.layout(), Layout::Columns);
+        dash.cycle_layout();
+        assert_eq!(dash.layout(), Layout::Rows);
+        dash.cycle_layout();
+        assert_eq!(dash.layout(), Layout::Focused);
+    }
+
+    #[test]
+    fn configured_panes_select_and_order() {
+        // from_name resolves local panes and rejects unknowns.
+        assert_eq!(PaneKind::from_name("git"), Some(PaneKind::Git));
+        assert_eq!(PaneKind::from_name("nope"), None);
     }
 
     #[test]

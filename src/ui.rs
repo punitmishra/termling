@@ -14,7 +14,7 @@ use crate::app::{App, Flair, Mode};
 use crate::buddy::{Quip, Tone};
 use crate::doodle;
 use crate::games::{GameKind, ItemColors};
-use crate::panes::{Dashboard, PaneKind};
+use crate::panes::{Dashboard, Layout as PaneLayout, PaneKind};
 
 pub fn draw(f: &mut Frame, app: &App) {
     let area = f.area();
@@ -27,7 +27,8 @@ pub fn draw(f: &mut Frame, app: &App) {
 }
 
 /// The info dashboard: a narrow sidebar of pane names on the left, and on the
-/// right either the focused pane or a grid of all panes (`s` toggles).
+/// right the content area tiled per the current [`PaneLayout`] (`s` cycles:
+/// focused → grid → columns → rows).
 fn draw_dashboard(f: &mut Frame, app: &App, area: Rect) {
     let theme = app.theme();
     let dash = app.dashboard();
@@ -39,47 +40,55 @@ fn draw_dashboard(f: &mut Frame, app: &App, area: Rect) {
     draw_sidebar(f, dash, cols[0], &theme);
 
     let content = cols[1];
-    if dash.split() {
-        // A grid of up to four panes: two rows, two columns.
-        let rows = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(content);
-        let mut cells: Vec<Rect> = Vec::new();
-        for r in rows.iter() {
-            let rc = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-                .split(*r);
-            cells.push(rc[0]);
-            cells.push(rc[1]);
-        }
-        // Show the page of panes that contains the selection (not always 0–3),
-        // so the online panes are reachable in the grid, and mark the selected.
-        let start = grid_window_start(dash.sel());
-        for ((i, (kind, pane)), cell) in dash
-            .all()
-            .enumerate()
-            .skip(start)
-            .take(GRID_CELLS)
-            .zip(cells)
-        {
-            draw_pane(f, kind, pane, cell, &theme, i == dash.sel());
-        }
-    } else if let Some(pane) = dash.focused() {
-        let kind = dash.kinds()[dash.sel()];
-        draw_pane(f, kind, pane, content, &theme, false);
+    let layout = dash.layout();
+    let cells = content_cells(layout, content);
+    // Window the panes onto the page that contains the selection, so the whole
+    // set (including the online panes further down) is reachable in every layout.
+    let n = cells.len().max(1);
+    let start = window_start(dash.sel(), n);
+    for ((i, (kind, pane)), cell) in dash.all().enumerate().skip(start).take(n).zip(cells) {
+        draw_pane(f, kind, pane, cell, &theme, i == dash.sel());
     }
 }
 
-/// Panes per grid page (2×2).
-const GRID_CELLS: usize = 4;
+/// The index the current page starts at: the page of `cells` panes that contains
+/// `sel`. Anchoring on the selection keeps the highlighted pane (including online
+/// panes further down the list) on screen in every multi-pane layout.
+fn window_start(sel: usize, cells: usize) -> usize {
+    let n = cells.max(1);
+    (sel / n) * n
+}
 
-/// The index the current grid page starts at: the page of [`GRID_CELLS`] panes
-/// that contains `sel`. Anchoring on the selection keeps the highlighted pane
-/// (including the online ones further down the list) on screen.
-fn grid_window_start(sel: usize) -> usize {
-    (sel / GRID_CELLS) * GRID_CELLS
+/// Split the content area into the tiles for a layout: one cell (focused), a 2×2
+/// grid, N side-by-side columns, or N stacked rows.
+fn content_cells(layout: PaneLayout, content: Rect) -> Vec<Rect> {
+    let even = |n: usize| vec![Constraint::Ratio(1, n as u32); n];
+    match layout {
+        PaneLayout::Focused => vec![content],
+        PaneLayout::Grid => Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(content)
+            .iter()
+            .flat_map(|r| {
+                Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .split(*r)
+                    .to_vec()
+            })
+            .collect(),
+        PaneLayout::Columns => Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(even(layout.cells()))
+            .split(content)
+            .to_vec(),
+        PaneLayout::Rows => Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(even(layout.cells()))
+            .split(content)
+            .to_vec(),
+    }
 }
 
 /// The dashboard's left sidebar: one line per pane, the selected one highlighted,
@@ -106,7 +115,11 @@ fn draw_sidebar(f: &mut Frame, dash: &Dashboard, area: Rect, theme: &crate::them
         ));
     }
     lines.push(Line::raw(""));
-    lines.push(Line::styled("s split", Style::default().fg(theme.dim)));
+    lines.push(Line::styled(
+        format!("s {}", dash.layout().label()),
+        Style::default().fg(theme.dim),
+    ));
+    lines.push(Line::styled("r refresh", Style::default().fg(theme.dim)));
     lines.push(Line::styled("esc back", Style::default().fg(theme.dim)));
 
     f.render_widget(Paragraph::new(lines).block(block), area);
@@ -637,18 +650,18 @@ mod tests {
     }
 
     #[test]
-    fn grid_window_anchors_on_selection() {
-        // The first page covers panes 0..4.
-        assert_eq!(grid_window_start(0), 0);
-        assert_eq!(grid_window_start(3), 0);
+    fn window_anchors_on_selection() {
+        // 4-cell grid: the first page covers 0..4.
+        assert_eq!(window_start(0, 4), 0);
+        assert_eq!(window_start(3, 4), 0);
         // Selecting a later pane (e.g. an online pane at index 5) pages forward
         // and still includes the selection in the window.
-        let start = grid_window_start(5);
+        let start = window_start(5, 4);
         assert_eq!(start, 4);
-        assert!((start..start + GRID_CELLS).contains(&5));
-        // Page boundaries land where expected.
-        assert_eq!(grid_window_start(4), 4);
-        assert_eq!(grid_window_start(8), 8);
+        assert!((start..start + 4).contains(&5));
+        // A 3-cell layout (columns/rows) pages in threes.
+        assert_eq!(window_start(7, 3), 6);
+        assert!((window_start(7, 3)..window_start(7, 3) + 3).contains(&7));
     }
 
     #[test]

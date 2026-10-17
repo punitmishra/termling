@@ -215,7 +215,7 @@ fn dashboard_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Up | KeyCode::Char('k') => app.dashboard_prev(),
         KeyCode::Down | KeyCode::Char('j') => app.dashboard_next(),
-        KeyCode::Char('s') => app.dashboard_toggle_split(),
+        KeyCode::Char('s') => app.dashboard_cycle_layout(),
         KeyCode::Char('r') => app.dashboard_refresh(),
         KeyCode::Esc | KeyCode::Char('q') => app.exit_dashboard(),
         _ => {}

@@ -130,6 +130,9 @@ fn fetch_blocking(spec: &FetchSpec) -> Result<String, String> {
         ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(8))
             .timeout_read(Duration::from_secs(8))
+            // A real User-Agent: some free APIs (e.g. Yahoo's quote endpoint)
+            // 429 or reject requests without one.
+            .user_agent(concat!("termling/", env!("CARGO_PKG_VERSION")))
             .build()
     });
     let mut req = match spec.method {
