@@ -21,6 +21,11 @@ mod event;
 mod games;
 mod init;
 mod mood;
+// The online plumbing is dormant in a default (zero-network) build, so parts of
+// it are only exercised under `--features online`; silence dead-code there.
+#[cfg_attr(not(feature = "online"), allow(dead_code))]
+mod net;
+mod panes;
 mod rng;
 mod theme;
 mod tmux;
@@ -118,6 +123,12 @@ fn run(terminal: &mut Tui, mut app: App, mut receiver: Option<Receiver>) -> io::
             }
         }
 
+        // Drain any completed network fetches (online mode only) the same way —
+        // non-blocking, so the render loop never waits on the network — then let
+        // the dashboard queue whatever it wants fetched next.
+        app.drain_net();
+        app.pump_fetches();
+
         // Wait for input, but never past the next scheduled step, so the game
         // (and the doodle animation) advance on a steady cadence regardless of
         // whether keys or shell events are arriving.
@@ -182,6 +193,7 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         Mode::Ambient => ambient_key(app, key),
         Mode::Menu => menu_key(app, key),
         Mode::Game => game_key(app, key),
+        Mode::Dashboard => dashboard_key(app, key),
     }
 }
 
@@ -190,8 +202,22 @@ fn handle_key(app: &mut App, key: KeyEvent) {
 fn ambient_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Enter | KeyCode::Char('g') => app.open_menu(),
+        KeyCode::Char('d') => app.open_dashboard(),
         KeyCode::Char('t') => app.cycle_theme(),
         KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
+        _ => {}
+    }
+}
+
+/// The dashboard: a sidebar of info panes. Navigate, toggle the split grid, force
+/// a refresh, or drop back to the ambient creature.
+fn dashboard_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => app.dashboard_prev(),
+        KeyCode::Down | KeyCode::Char('j') => app.dashboard_next(),
+        KeyCode::Char('s') => app.dashboard_toggle_split(),
+        KeyCode::Char('r') => app.dashboard_refresh(),
+        KeyCode::Esc | KeyCode::Char('q') => app.exit_dashboard(),
         _ => {}
     }
 }

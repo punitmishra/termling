@@ -3,7 +3,7 @@
 //! pane — termling never draws a shell of its own.)
 
 use ratatui::{
-    layout::{Alignment, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
@@ -14,6 +14,7 @@ use crate::app::{App, Flair, Mode};
 use crate::buddy::{Quip, Tone};
 use crate::doodle;
 use crate::games::{GameKind, ItemColors};
+use crate::panes::{Dashboard, PaneKind};
 
 pub fn draw(f: &mut Frame, app: &App) {
     let area = f.area();
@@ -21,7 +22,103 @@ pub fn draw(f: &mut Frame, app: &App) {
         Mode::Ambient => draw_doodle(f, app, area),
         Mode::Menu => draw_menu(f, app, area),
         Mode::Game => draw_game(f, app, area),
+        Mode::Dashboard => draw_dashboard(f, app, area),
     }
+}
+
+/// The info dashboard: a narrow sidebar of pane names on the left, and on the
+/// right either the focused pane or a grid of all panes (`s` toggles).
+fn draw_dashboard(f: &mut Frame, app: &App, area: Rect) {
+    let theme = app.theme();
+    let dash = app.dashboard();
+
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(16), Constraint::Min(0)])
+        .split(area);
+    draw_sidebar(f, dash, cols[0], &theme);
+
+    let content = cols[1];
+    if dash.split() {
+        // A grid of up to four panes: two rows, two columns.
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(content);
+        let mut cells: Vec<Rect> = Vec::new();
+        for r in rows.iter() {
+            let rc = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(*r);
+            cells.push(rc[0]);
+            cells.push(rc[1]);
+        }
+        for ((kind, pane), cell) in dash.all().zip(cells) {
+            draw_pane(f, kind, pane, cell, &theme);
+        }
+    } else if let Some(pane) = dash.focused() {
+        let kind = dash.kinds()[dash.sel()];
+        draw_pane(f, kind, pane, content, &theme);
+    }
+}
+
+/// The dashboard's left sidebar: one line per pane, the selected one highlighted,
+/// online panes flagged so it's obvious which need `TERMLING_ONLINE=1`.
+fn draw_sidebar(f: &mut Frame, dash: &Dashboard, area: Rect, theme: &crate::theme::Theme) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" panes ")
+        .border_style(Style::default().fg(theme.accent));
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, kind) in dash.kinds().iter().enumerate() {
+        let selected = i == dash.sel();
+        let marker = if selected { "▸ " } else { "  " };
+        let suffix = if kind.online() { " ·" } else { "" };
+        let style = if selected {
+            Style::default().fg(theme.bar).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.accent)
+        };
+        lines.push(Line::styled(format!("{marker}{}{suffix}", kind.name()), style));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::styled("s split", Style::default().fg(theme.dim)));
+    lines.push(Line::styled("esc back", Style::default().fg(theme.dim)));
+
+    f.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// Render one pane into `area`: a bordered, titled box filled with the pane's own
+/// colored rows (shared `Row`/`Seg` vocabulary), clipped to the tile.
+fn draw_pane(
+    f: &mut Frame,
+    _kind: PaneKind,
+    pane: &dyn crate::panes::Pane,
+    area: Rect,
+    theme: &crate::theme::Theme,
+) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" {} ", pane.title()))
+        .border_style(Style::default().fg(theme.accent));
+    let inner = block.inner(area);
+
+    let rows = pane.render(inner.width, inner.height, theme);
+    let lines: Vec<Line> = rows
+        .iter()
+        .take(inner.height as usize)
+        .map(|row| {
+            let spans: Vec<Span> = row
+                .iter()
+                .map(|s| Span::styled(s.text.clone(), Style::default().fg(s.color)))
+                .collect();
+            Line::from(spans)
+        })
+        .collect();
+
+    f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn draw_doodle(f: &mut Frame, app: &App, area: Rect) {

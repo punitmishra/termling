@@ -14,6 +14,17 @@ authors = ["Punit Mishra"]
 [dependencies]
 ratatui = "0.29"
 crossterm = "0.28"
+# Networked panes only. Gated behind the `online` feature so the default build
+# stays zero-network with just the two deps above. ureq uses rustls (no OpenSSL).
+ureq = { version = "2", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+
+[features]
+# Off by default: compiles the networked panes (weather/stocks/news/dev-news/AI)
+# and the HTTP/JSON deps they need. Without it, termling makes no network calls
+# and pulls only ratatui + crossterm.
+online = ["dep:ureq", "dep:serde", "dep:serde_json"]
 
 [[bin]]
 name = "termling"

@@ -1,0 +1,243 @@
+//! The dashboard pane framework.
+//!
+//! A [`Pane`] is one tile in termling's sidebar-driven dashboard. The design
+//! mirrors [`crate::games`]: a trait plus a [`PaneKind`] registry, so adding a
+//! pane is a new file and one line in [`PaneKind::ALL`]/[`PaneKind::make`]. Panes
+//! render into the shared [`Row`]/[`Seg`](crate::doodle) vocabulary the rest of
+//! the UI already speaks, so the dashboard composes them with no special casing.
+//!
+//! Local panes (git, system, buddy insights) work in the default zero-network
+//! build. *Online* panes (weather, stocks, news, dev-news, AI) are compiled only
+//! `--features online` and fetch through [`crate::net`] off the render thread:
+//! each tick the dashboard asks a pane for an optional [`FetchSpec`] via
+//! [`Pane::poll_fetch`], the worker performs it, and the result is folded back in
+//! through [`Pane::on_data`]. A pane never blocks and never calls the network
+//! itself.
+
+use crate::doodle::{Row, Seg};
+use crate::net::{FetchResult, FetchSpec};
+use crate::theme::Theme;
+use ratatui::style::Color;
+
+/// Every pane in the dashboard. Add a variant here (plus a file implementing
+/// [`Pane`]) and wire it into [`ALL`](PaneKind::ALL), [`name`](PaneKind::name),
+/// [`online`](PaneKind::online), and [`make`](PaneKind::make).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaneKind {
+    /// A built-in welcome / help tile (always present).
+    Welcome,
+}
+
+impl PaneKind {
+    /// The panes available in this build, in sidebar order. Online panes only
+    /// appear when compiled `--features online`.
+    pub fn all() -> Vec<PaneKind> {
+        vec![PaneKind::Welcome]
+    }
+
+    /// Short sidebar label.
+    pub fn name(self) -> &'static str {
+        match self {
+            PaneKind::Welcome => "welcome",
+        }
+    }
+
+    /// Whether this pane needs the network (and thus online mode to do anything).
+    pub fn online(self) -> bool {
+        match self {
+            PaneKind::Welcome => false,
+        }
+    }
+
+    /// Construct the live pane.
+    pub fn make(self) -> Box<dyn Pane> {
+        match self {
+            PaneKind::Welcome => Box::new(Welcome),
+        }
+    }
+}
+
+/// One dashboard tile. Local panes implement only `title`/`render`; networked
+/// panes also implement `poll_fetch`/`on_data` to drive [`crate::net`].
+pub trait Pane {
+    /// Heading shown at the top of the tile.
+    fn title(&self) -> String;
+
+    /// Paint the tile's body into at most `width`×`height` cells, in the active
+    /// theme. Returns shared colored [`Row`]s; the UI clips to the tile.
+    fn render(&self, width: u16, height: u16, theme: &Theme) -> Vec<Row>;
+
+    /// Advance any animation / mark data stale. Called once per dashboard tick.
+    fn tick(&mut self, _frame: u64) {}
+
+    /// A network request this pane wants made *now*, if its data is due. Local
+    /// panes return `None`. The dashboard only forwards these in online mode.
+    fn poll_fetch(&mut self) -> Option<FetchSpec> {
+        None
+    }
+
+    /// Fold a completed fetch (routed to this pane by kind) back into state.
+    fn on_data(&mut self, _result: &FetchResult) {}
+}
+
+/// Build a one-line [`Row`] of a single color — the common case for text panes.
+pub fn line(text: impl Into<String>, color: Color) -> Row {
+    vec![Seg {
+        text: text.into(),
+        color,
+    }]
+}
+
+/// The dashboard: the set of live panes, the sidebar selection, and whether we're
+/// showing one focused pane or a grid of several. Lives on
+/// [`App`](crate::app::App) like the arcade game does.
+pub struct Dashboard {
+    kinds: Vec<PaneKind>,
+    panes: Vec<Box<dyn Pane>>,
+    sel: usize,
+    /// False → one focused pane fills the content area; true → a grid of panes.
+    split: bool,
+}
+
+impl Dashboard {
+    pub fn new() -> Dashboard {
+        let kinds = PaneKind::all();
+        let panes = kinds.iter().map(|k| k.make()).collect();
+        Dashboard {
+            kinds,
+            panes,
+            sel: 0,
+            split: false,
+        }
+    }
+
+    pub fn kinds(&self) -> &[PaneKind] {
+        &self.kinds
+    }
+
+    pub fn sel(&self) -> usize {
+        self.sel
+    }
+
+    pub fn split(&self) -> bool {
+        self.split
+    }
+
+    pub fn toggle_split(&mut self) {
+        self.split = !self.split;
+    }
+
+    pub fn next(&mut self) {
+        if !self.panes.is_empty() {
+            self.sel = (self.sel + 1) % self.panes.len();
+        }
+    }
+
+    pub fn prev(&mut self) {
+        if !self.panes.is_empty() {
+            let n = self.panes.len();
+            self.sel = (self.sel + n - 1) % n;
+        }
+    }
+
+    /// The currently-selected pane.
+    pub fn focused(&self) -> Option<&dyn Pane> {
+        self.panes.get(self.sel).map(|b| b.as_ref())
+    }
+
+    /// All panes paired with their kind, for grid rendering.
+    pub fn all(&self) -> impl Iterator<Item = (PaneKind, &dyn Pane)> {
+        self.kinds
+            .iter()
+            .copied()
+            .zip(self.panes.iter().map(|b| b.as_ref()))
+    }
+
+    /// Advance every pane's animation clock.
+    pub fn tick(&mut self, frame: u64) {
+        for p in &mut self.panes {
+            p.tick(frame);
+        }
+    }
+
+    /// Collect any fetches the panes want performed this tick (online mode only).
+    pub fn poll_fetches(&mut self) -> Vec<FetchSpec> {
+        self.panes.iter_mut().filter_map(|p| p.poll_fetch()).collect()
+    }
+
+    /// Route a completed fetch to the pane that asked for it.
+    pub fn on_data(&mut self, result: &FetchResult) {
+        for (kind, pane) in self.kinds.iter().zip(self.panes.iter_mut()) {
+            if *kind == result.pane {
+                pane.on_data(result);
+            }
+        }
+    }
+}
+
+impl Default for Dashboard {
+    fn default() -> Self {
+        Dashboard::new()
+    }
+}
+
+/// The built-in welcome tile: a short orientation + what the dashboard can do.
+struct Welcome;
+
+impl Pane for Welcome {
+    fn title(&self) -> String {
+        "welcome".into()
+    }
+
+    fn render(&self, _width: u16, _height: u16, theme: &Theme) -> Vec<Row> {
+        vec![
+            line("termling dashboard", theme.accent),
+            line("", theme.dim),
+            line("↑/↓  pick a pane", theme.dim),
+            line("s    toggle split grid", theme.dim),
+            line("r    refresh", theme.dim),
+            line("esc  back to the creature", theme.dim),
+            line("", theme.dim),
+            line("more panes arrive as", theme.dim),
+            line("features land.", theme.dim),
+        ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::THEMES;
+
+    #[test]
+    fn dashboard_starts_with_the_welcome_pane_and_renders() {
+        let dash = Dashboard::new();
+        assert_eq!(dash.sel(), 0);
+        assert!(!dash.split());
+        let pane = dash.focused().expect("a focused pane");
+        assert_eq!(pane.title(), "welcome");
+        let rows = pane.render(40, 12, &THEMES[0]);
+        assert!(!rows.is_empty());
+    }
+
+    #[test]
+    fn sidebar_navigation_wraps_and_split_toggles() {
+        let mut dash = Dashboard::new();
+        let n = dash.kinds().len();
+        dash.prev(); // wrap backwards from 0
+        assert_eq!(dash.sel(), n - 1);
+        dash.next(); // back to 0
+        assert_eq!(dash.sel(), 0);
+        assert!(!dash.split());
+        dash.toggle_split();
+        assert!(dash.split());
+    }
+
+    #[test]
+    fn local_panes_request_no_network() {
+        // A local pane must not ask the framework to fetch anything.
+        let mut dash = Dashboard::new();
+        assert!(dash.poll_fetches().is_empty());
+        assert!(PaneKind::all().iter().all(|k| !k.online()));
+    }
+}

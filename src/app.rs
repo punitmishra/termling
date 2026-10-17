@@ -13,6 +13,8 @@ use crate::doodle::Character;
 use crate::event::{Event, Kind};
 use crate::games::{GameKind, Input, MiniGame};
 use crate::mood::{Mood, Signals};
+use crate::net::Net;
+use crate::panes::Dashboard;
 use crate::theme::{self, Theme};
 
 /// What the companion is showing: the ambient creature, the arcade picker, or a
@@ -26,6 +28,8 @@ pub enum Mode {
     Menu,
     /// A game in progress.
     Game,
+    /// The info dashboard: a sidebar of panes (local, and online when enabled).
+    Dashboard,
 }
 
 /// A brief celebratory flourish overlaid on the ambient creature, then it fades.
@@ -120,6 +124,13 @@ pub struct App {
     buddy: Buddy,
     /// The current speech-bubble line and how many frames it has left.
     speech: Option<(Quip, u32)>,
+
+    // --- the info dashboard ---
+    /// The sidebar of info panes (local always; online when enabled).
+    dashboard: Dashboard,
+    /// The background fetch worker — `Some` only in online mode, so a default
+    /// build never spawns a thread or touches the network.
+    net: Option<Net>,
 }
 
 /// How many recent commands the ambient feed remembers.
@@ -151,6 +162,9 @@ impl App {
             flair: None,
             buddy: Buddy::load(),
             speech: None,
+            dashboard: Dashboard::new(),
+            // Spawn the fetch worker only when online mode is actually on.
+            net: crate::net::online_enabled().then(Net::spawn),
         }
     }
 
@@ -405,6 +419,64 @@ impl App {
         self.game.as_deref()
     }
 
+    // -- the info dashboard --
+
+    /// Open the dashboard (sidebar of info panes).
+    pub fn open_dashboard(&mut self) {
+        self.mode = Mode::Dashboard;
+        self.idle_ticks = 0;
+    }
+
+    /// Leave the dashboard, back to the ambient creature.
+    pub fn exit_dashboard(&mut self) {
+        self.mode = Mode::Ambient;
+        self.idle_ticks = 0;
+    }
+
+    /// The dashboard state, for the UI to render.
+    pub fn dashboard(&self) -> &Dashboard {
+        &self.dashboard
+    }
+
+    pub fn dashboard_prev(&mut self) {
+        self.dashboard.prev();
+    }
+
+    pub fn dashboard_next(&mut self) {
+        self.dashboard.next();
+    }
+
+    pub fn dashboard_toggle_split(&mut self) {
+        self.dashboard.toggle_split();
+    }
+
+    /// Force every pane to re-fetch on the next pump (online mode only).
+    pub fn dashboard_refresh(&mut self) {
+        if let Some(net) = &self.net {
+            for spec in self.dashboard.poll_fetches() {
+                net.request(spec);
+            }
+        }
+    }
+
+    /// Fold any completed network fetches back into their panes. No-op offline.
+    pub fn drain_net(&mut self) {
+        if let Some(net) = &self.net {
+            for result in net.try_drain() {
+                self.dashboard.on_data(&result);
+            }
+        }
+    }
+
+    /// Queue whatever the panes want fetched now (online mode only). No-op offline.
+    pub fn pump_fetches(&mut self) {
+        if let Some(net) = &self.net {
+            for spec in self.dashboard.poll_fetches() {
+                net.request(spec);
+            }
+        }
+    }
+
     // -- the game picker --
 
     /// Open the arcade menu.
@@ -472,7 +544,7 @@ impl App {
                 Duration::from_millis(ms)
             }
             (Mode::Game, _) => Duration::from_millis(150),
-            (Mode::Ambient | Mode::Menu, _) => Duration::from_millis(100),
+            (Mode::Ambient | Mode::Menu | Mode::Dashboard, _) => Duration::from_millis(100),
         }
     }
 
@@ -507,6 +579,11 @@ impl App {
                 let frame = self.frame;
                 self.roster
                     .retain(|s| s.running || frame.saturating_sub(s.last_seen) < STALE_TICKS);
+            }
+            Mode::Dashboard => {
+                self.idle_ticks = self.idle_ticks.saturating_add(1);
+                self.burst = self.burst.saturating_sub(1);
+                self.dashboard.tick(self.frame);
             }
         }
     }
