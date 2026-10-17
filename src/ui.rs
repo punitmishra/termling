@@ -81,7 +81,10 @@ fn draw_sidebar(f: &mut Frame, dash: &Dashboard, area: Rect, theme: &crate::them
         } else {
             Style::default().fg(theme.accent)
         };
-        lines.push(Line::styled(format!("{marker}{}{suffix}", kind.name()), style));
+        lines.push(Line::styled(
+            format!("{marker}{}{suffix}", kind.name()),
+            style,
+        ));
     }
     lines.push(Line::raw(""));
     lines.push(Line::styled("s split", Style::default().fg(theme.dim)));
@@ -435,7 +438,8 @@ fn draw_menu(f: &mut Frame, app: &App, area: Rect) {
     // each with a blank spacer. Everything else is the windowed game list, at
     // two rows per entry (name + tagline).
     const HEADER: usize = 2;
-    const FOOTER: usize = 2;
+    // Count line + options line + controls line.
+    const FOOTER: usize = 3;
     const PER_ENTRY: usize = 2;
     let list_rows = inner_h.saturating_sub(HEADER + FOOTER);
     let fit = (list_rows / PER_ENTRY).max(1);
@@ -475,8 +479,18 @@ fn draw_menu(f: &mut Frame, app: &App, area: Rect) {
         },
         Style::default().fg(theme.dim),
     ));
+    // The currently-selected options, so the player sees what they'll launch.
+    let opts = app.game_options();
     lines.push(Line::styled(
-        "↑↓ pick  ·  enter play  ·  esc back",
+        format!(
+            "difficulty {}  ·  speed {}",
+            opts.difficulty.label(),
+            opts.speed.label()
+        ),
+        Style::default().fg(theme.bar),
+    ));
+    lines.push(Line::styled(
+        "↑↓ pick  ·  d difficulty  ·  s speed  ·  enter play  ·  esc back",
         Style::default().fg(theme.dim),
     ));
 

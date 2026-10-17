@@ -7,7 +7,7 @@
 //! One `step()` = one tick: the muncher drifts in its current heading and the
 //! ghost takes a step toward you (or away, while it's frightened).
 
-use super::{coalesce, Input, ItemColors, MiniGame, SCENERY};
+use super::{coalesce, GameOptions, Input, ItemColors, MiniGame, SCENERY};
 use crate::doodle::{Character, Row};
 use crate::rng::Rng;
 use ratatui::style::Color;
@@ -45,12 +45,14 @@ pub struct Muncher {
     boards: u32,
     tick: u64,
     over: bool,
+    opts: GameOptions,
     rng: Rng,
 }
 
 impl Muncher {
-    pub fn new(character: Character, seed: u64) -> Muncher {
+    pub fn new(character: Character, seed: u64, opts: GameOptions) -> Muncher {
         let grid = Muncher::build_grid();
+        let lives = (START_LIVES as i32 + opts.difficulty.life_bonus()).max(1) as u32;
         let mut g = Muncher {
             character,
             grid,
@@ -61,10 +63,11 @@ impl Muncher {
             gy: GHOST_START.1,
             frightened: 0,
             score: 0,
-            lives: START_LIVES,
+            lives,
             boards: 0,
             tick: 0,
             over: false,
+            opts,
             rng: Rng::new(seed),
         };
         g.grid[g.py][g.px] = Tile::Empty;
@@ -111,7 +114,9 @@ impl Muncher {
     }
 
     fn ghost_period(&self) -> u64 {
-        let base = 3u64.saturating_sub(self.level() as u64).max(1);
+        // Difficulty speeds up (Hard) or slows down (Easy) the hunt.
+        let notch = self.opts.difficulty.notch() as i64;
+        let base = (3i64 - self.level() as i64 - notch).max(1) as u64;
         // Frightened ghosts dawdle, giving you a window to catch them.
         if self.frightened > 0 {
             base + 1
@@ -226,7 +231,7 @@ impl MiniGame for Muncher {
 
     fn restart(&mut self) {
         let seed = self.rng.next_u64();
-        *self = Muncher::new(self.character, seed);
+        *self = Muncher::new(self.character, seed, self.opts);
     }
 
     fn score(&self) -> u32 {
@@ -320,6 +325,10 @@ impl MiniGame for Muncher {
 mod tests {
     use super::*;
 
+    fn opts() -> GameOptions {
+        GameOptions::default()
+    }
+
     fn colors() -> ItemColors {
         ItemColors {
             good: Color::Reset,
@@ -330,7 +339,7 @@ mod tests {
 
     #[test]
     fn eating_a_pellet_scores() {
-        let mut g = Muncher::new(Character::Blob, 1);
+        let mut g = Muncher::new(Character::Blob, 1, opts());
         // (1,1) is clear; (2,1) to its right is a pellet on the open border row.
         assert_eq!(g.grid[1][2], Tile::Pellet);
         g.dir = Some(1); // right
@@ -342,7 +351,7 @@ mod tests {
 
     #[test]
     fn a_power_dot_frightens_the_ghost() {
-        let mut g = Muncher::new(Character::Cat, 2);
+        let mut g = Muncher::new(Character::Cat, 2, opts());
         // Drop the muncher next to a power dot and step onto it.
         g.px = POWER[0].0 - 1;
         g.py = POWER[0].1;
@@ -354,7 +363,7 @@ mod tests {
 
     #[test]
     fn the_ghost_catching_you_costs_a_life() {
-        let mut g = Muncher::new(Character::Fox, 3);
+        let mut g = Muncher::new(Character::Fox, 3, opts());
         // Park the ghost right of the muncher, no fright, and walk into it. The
         // ghost won't move this tick (period 2, tick becomes 1).
         g.px = 5;
@@ -371,7 +380,7 @@ mod tests {
 
     #[test]
     fn eating_a_scared_ghost_scores() {
-        let mut g = Muncher::new(Character::Ghost, 4);
+        let mut g = Muncher::new(Character::Ghost, 4, opts());
         g.px = 5;
         g.py = 5;
         g.gx = 6;
@@ -386,7 +395,7 @@ mod tests {
 
     #[test]
     fn render_has_stable_dimensions() {
-        let g = Muncher::new(Character::Robot, 5);
+        let g = Muncher::new(Character::Robot, 5, opts());
         let rows = g.render(colors());
         assert_eq!(rows.len(), GH);
         for row in rows {
@@ -397,7 +406,7 @@ mod tests {
 
     #[test]
     fn many_steps_never_panic() {
-        let mut g = Muncher::new(Character::Dragon, 0x51A2);
+        let mut g = Muncher::new(Character::Dragon, 0x51A2, opts());
         for i in 0..5000 {
             match i % 4 {
                 0 => g.input(Input::Left),

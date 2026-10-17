@@ -11,7 +11,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::buddy::{Buddy, Quip};
 use crate::doodle::Character;
 use crate::event::{Event, Kind};
-use crate::games::{GameKind, Input, MiniGame};
+use crate::games::{GameKind, GameOptions, Input, MiniGame};
 use crate::mood::{Mood, Signals};
 use crate::net::Net;
 use crate::panes::Dashboard;
@@ -83,6 +83,8 @@ pub struct App {
     game: Option<Box<dyn MiniGame>>,
     /// Highlighted entry in the game picker.
     menu_sel: usize,
+    /// Difficulty + speed the next game is built with (chosen in the picker).
+    options: GameOptions,
 
     // --- look & feel ---
     theme: usize,
@@ -145,6 +147,7 @@ impl App {
             mode: Mode::Ambient,
             game: None,
             menu_sel: 0,
+            options: GameOptions::default(),
             theme: 0,
             xp,
             best_streak,
@@ -497,10 +500,25 @@ impl App {
         self.menu_sel = (self.menu_sel + 1) % GameKind::ALL.len();
     }
 
-    /// Start the highlighted game.
+    /// The difficulty + speed the picker will launch the next game with.
+    pub fn game_options(&self) -> GameOptions {
+        self.options
+    }
+
+    /// Cycle the selected difficulty (Easy → Normal → Hard → …).
+    pub fn cycle_difficulty(&mut self) {
+        self.options.difficulty = self.options.difficulty.next();
+    }
+
+    /// Cycle the selected speed (Calm → Normal → Fast → …).
+    pub fn cycle_speed(&mut self) {
+        self.options.speed = self.options.speed.next();
+    }
+
+    /// Start the highlighted game with the chosen options.
     pub fn menu_select(&mut self) {
         let kind = GameKind::ALL[self.menu_sel];
-        self.game = Some(kind.make(self.current_character(), seed()));
+        self.game = Some(kind.make(self.current_character(), seed(), self.options));
         self.mode = Mode::Game;
     }
 
@@ -541,7 +559,8 @@ impl App {
         match (self.mode, &self.game) {
             (Mode::Game, Some(g)) if !g.is_over() => {
                 let ms = 150u64.saturating_sub((g.level() as u64 - 1) * 12).max(55);
-                Duration::from_millis(ms)
+                // Fold in the chosen speed on top of the per-game level curve.
+                Duration::from_millis(self.options.speed.scale(ms))
             }
             (Mode::Game, _) => Duration::from_millis(150),
             (Mode::Ambient | Mode::Menu | Mode::Dashboard, _) => Duration::from_millis(100),
