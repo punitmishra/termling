@@ -9,7 +9,7 @@
 //! One `step()` = one row of falling. The main loop calls it on a timer, so the
 //! game's speed is just how often `step` runs — see `App::step_interval`.
 
-use super::{coalesce, Input, ItemColors, MiniGame};
+use super::{coalesce, GameOptions, Input, ItemColors, MiniGame};
 use crate::doodle::{Character, Row};
 use crate::rng::Rng;
 use ratatui::style::Color;
@@ -44,21 +44,24 @@ pub struct DoodleDrop {
     best_combo: u32,
     spawn_timer: u32,
     over: bool,
+    opts: GameOptions,
     rng: Rng,
 }
 
 impl DoodleDrop {
-    pub fn new(character: Character, seed: u64) -> DoodleDrop {
+    pub fn new(character: Character, seed: u64, opts: GameOptions) -> DoodleDrop {
+        let lives = (START_LIVES as i32 + opts.difficulty.life_bonus()).max(1) as u32;
         DoodleDrop {
             character,
             px: GW / 2 - 1,
             items: Vec::new(),
             score: 0,
-            lives: START_LIVES,
+            lives,
             combo: 0,
             best_combo: 0,
             spawn_timer: 2,
             over: false,
+            opts,
             rng: Rng::new(seed),
         }
     }
@@ -76,8 +79,10 @@ impl DoodleDrop {
     }
 
     fn spawn(&mut self, level: u32) {
-        // Bombs get more common with level, capped so it stays fair.
-        let bad = self.rng.chance((25 + level * 4).min(55), 100);
+        // Bombs get more common with level, capped so it stays fair; difficulty
+        // nudges the whole curve up or down.
+        let pct = ((25 + level * 4).min(55) as i32 + self.opts.difficulty.notch() * 8).clamp(5, 75);
+        let bad = self.rng.chance(pct as u32, 100);
         let gem = !bad && self.rng.chance(1, 6);
         let x = self.rng.below(GW);
         self.items.push(Item { x, y: 0, bad, gem });
@@ -95,7 +100,7 @@ impl MiniGame for DoodleDrop {
 
     fn restart(&mut self) {
         let seed = self.rng.next_u64();
-        *self = DoodleDrop::new(self.character, seed);
+        *self = DoodleDrop::new(self.character, seed, self.opts);
     }
 
     fn score(&self) -> u32 {
@@ -212,6 +217,11 @@ fn player_sprite(c: Character) -> [char; PLAYER_W] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::games::Difficulty;
+
+    fn opts() -> GameOptions {
+        GameOptions::default()
+    }
 
     /// An item one row above the catcher, aligned with the player.
     fn drop_on_player(g: &DoodleDrop, bad: bool, gem: bool) -> Item {
@@ -225,7 +235,7 @@ mod tests {
 
     #[test]
     fn catching_a_star_scores_and_builds_combo() {
-        let mut g = DoodleDrop::new(Character::Blob, 42);
+        let mut g = DoodleDrop::new(Character::Blob, 42, opts());
         g.items = vec![drop_on_player(&g, false, false)];
         g.step();
         assert_eq!(g.score, 10);
@@ -235,7 +245,7 @@ mod tests {
 
     #[test]
     fn catching_a_bomb_costs_a_life_and_breaks_combo() {
-        let mut g = DoodleDrop::new(Character::Robot, 7);
+        let mut g = DoodleDrop::new(Character::Robot, 7, opts());
         g.combo = 3;
         g.items = vec![drop_on_player(&g, true, false)];
         g.step();
@@ -245,7 +255,7 @@ mod tests {
 
     #[test]
     fn missing_a_good_drop_resets_combo() {
-        let mut g = DoodleDrop::new(Character::Cat, 99);
+        let mut g = DoodleDrop::new(Character::Cat, 99, opts());
         g.combo = 4;
         // A star far from the player (column 0) — the catcher starts centered.
         g.items = vec![Item {
@@ -261,7 +271,7 @@ mod tests {
 
     #[test]
     fn losing_all_lives_ends_the_game() {
-        let mut g = DoodleDrop::new(Character::Fox, 5);
+        let mut g = DoodleDrop::new(Character::Fox, 5, opts());
         g.lives = 1;
         g.items = vec![drop_on_player(&g, true, false)];
         g.step();
@@ -270,7 +280,7 @@ mod tests {
 
     #[test]
     fn movement_stays_in_bounds() {
-        let mut g = DoodleDrop::new(Character::Ghost, 1);
+        let mut g = DoodleDrop::new(Character::Ghost, 1, opts());
         for _ in 0..GW * 2 {
             g.move_left();
         }
@@ -283,7 +293,7 @@ mod tests {
 
     #[test]
     fn render_has_stable_dimensions() {
-        let g = DoodleDrop::new(Character::Blob, 3);
+        let g = DoodleDrop::new(Character::Blob, 3, opts());
         let colors = ItemColors {
             good: Color::Reset,
             gem: Color::Reset,
@@ -298,8 +308,32 @@ mod tests {
     }
 
     #[test]
+    fn difficulty_tunes_starting_lives() {
+        let easy = DoodleDrop::new(
+            Character::Blob,
+            1,
+            GameOptions {
+                difficulty: Difficulty::Easy,
+                ..GameOptions::default()
+            },
+        );
+        let normal = DoodleDrop::new(Character::Blob, 1, GameOptions::default());
+        let hard = DoodleDrop::new(
+            Character::Blob,
+            1,
+            GameOptions {
+                difficulty: Difficulty::Hard,
+                ..GameOptions::default()
+            },
+        );
+        assert_eq!(normal.lives, START_LIVES);
+        assert!(easy.lives > normal.lives);
+        assert!(hard.lives < normal.lives);
+    }
+
+    #[test]
     fn many_steps_never_panic_and_keep_invariants() {
-        let mut g = DoodleDrop::new(Character::Blob, 0xDEAD_BEEF);
+        let mut g = DoodleDrop::new(Character::Blob, 0xDEAD_BEEF, opts());
         for i in 0..3000 {
             if i % 3 == 0 {
                 g.move_right();

@@ -226,6 +226,9 @@ fn menu_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Up | KeyCode::Left | KeyCode::Char('k') | KeyCode::Char('h') => app.menu_prev(),
         KeyCode::Down | KeyCode::Right | KeyCode::Char('j') | KeyCode::Char('l') => app.menu_next(),
+        // Cycle the run options in place — no new mode, just the arcade menu.
+        KeyCode::Char('d') | KeyCode::Char(']') => app.cycle_difficulty(),
+        KeyCode::Char('s') | KeyCode::Char('f') => app.cycle_speed(),
         KeyCode::Enter | KeyCode::Char(' ') => app.menu_select(),
         KeyCode::Esc | KeyCode::Char('q') => app.exit_menu(),
         _ => {}

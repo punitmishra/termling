@@ -5,7 +5,7 @@
 //!
 //! One `step()` = one row of world scroll.
 
-use super::{coalesce, Input, ItemColors, MiniGame, SCENERY};
+use super::{coalesce, GameOptions, Input, ItemColors, MiniGame, SCENERY};
 use crate::doodle::{Character, Row};
 use crate::rng::Rng;
 use ratatui::style::Color;
@@ -37,11 +37,12 @@ pub struct GapDive {
     score: u32,
     spawn_timer: usize,
     over: bool,
+    opts: GameOptions,
     rng: Rng,
 }
 
 impl GapDive {
-    pub fn new(character: Character, seed: u64) -> GapDive {
+    pub fn new(character: Character, seed: u64, opts: GameOptions) -> GapDive {
         GapDive {
             character,
             px: GW / 2 - 1,
@@ -50,6 +51,7 @@ impl GapDive {
             score: 0,
             spawn_timer: 1,
             over: false,
+            opts,
             rng: Rng::new(seed),
         }
     }
@@ -68,7 +70,10 @@ impl GapDive {
 
     fn spawn(&mut self, level: u32) {
         let period = (6usize.saturating_sub(level as usize)).max(3);
-        let gw = (7usize.saturating_sub(level as usize)).max(4);
+        // Difficulty widens or narrows the gap you must thread.
+        let notch = self.opts.difficulty.notch();
+        let floor = (4 - notch).max(3);
+        let gw = (7i32 - level as i32 - notch).max(floor) as usize;
         let max_shift = period - 1;
         // Reachable gap window: clamped near the previous gap and to the field.
         let lo = self.prev_gap.saturating_sub(max_shift);
@@ -104,7 +109,7 @@ impl MiniGame for GapDive {
 
     fn restart(&mut self) {
         let seed = self.rng.next_u64();
-        *self = GapDive::new(self.character, seed);
+        *self = GapDive::new(self.character, seed, self.opts);
     }
 
     fn score(&self) -> u32 {
@@ -212,6 +217,10 @@ impl MiniGame for GapDive {
 mod tests {
     use super::*;
 
+    fn opts() -> GameOptions {
+        GameOptions::default()
+    }
+
     fn colors() -> ItemColors {
         ItemColors {
             good: Color::Reset,
@@ -222,7 +231,7 @@ mod tests {
 
     #[test]
     fn threading_the_gap_scores_and_survives() {
-        let mut g = GapDive::new(Character::Blob, 42);
+        let mut g = GapDive::new(Character::Blob, 42, opts());
         g.walls = vec![Wall {
             y: PLAYER_ROW - 1,
             gap_start: g.px,
@@ -239,7 +248,7 @@ mod tests {
 
     #[test]
     fn hitting_the_wall_ends_the_run() {
-        let mut g = GapDive::new(Character::Fox, 7);
+        let mut g = GapDive::new(Character::Fox, 7, opts());
         // A gap far to the right; glider on the left is doomed.
         g.walls = vec![Wall {
             y: PLAYER_ROW - 1,
@@ -257,7 +266,7 @@ mod tests {
 
     #[test]
     fn grabbing_the_gem_adds_bonus() {
-        let mut g = GapDive::new(Character::Cat, 3);
+        let mut g = GapDive::new(Character::Cat, 3, opts());
         g.walls = vec![Wall {
             y: PLAYER_ROW - 1,
             gap_start: g.px,
@@ -273,7 +282,7 @@ mod tests {
 
     #[test]
     fn render_has_stable_dimensions() {
-        let g = GapDive::new(Character::Robot, 9);
+        let g = GapDive::new(Character::Robot, 9, opts());
         let rows = g.render(colors());
         assert_eq!(rows.len(), GH);
         for row in rows {
@@ -284,7 +293,7 @@ mod tests {
 
     #[test]
     fn many_steps_never_panic() {
-        let mut g = GapDive::new(Character::Ghost, 0xF00D);
+        let mut g = GapDive::new(Character::Ghost, 0xF00D, opts());
         for i in 0..4000 {
             if i % 2 == 0 {
                 g.move_right();

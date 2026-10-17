@@ -5,7 +5,7 @@
 //!
 //! One `step()` = one tick: shots rise, and every so often the invaders drop.
 
-use super::{coalesce, Input, ItemColors, MiniGame};
+use super::{coalesce, GameOptions, Input, ItemColors, MiniGame};
 use crate::doodle::{Character, Row};
 use crate::rng::Rng;
 use ratatui::style::Color;
@@ -34,11 +34,13 @@ pub struct Blast {
     score: u32,
     lives: u32,
     over: bool,
+    opts: GameOptions,
     rng: Rng,
 }
 
 impl Blast {
-    pub fn new(character: Character, seed: u64) -> Blast {
+    pub fn new(character: Character, seed: u64, opts: GameOptions) -> Blast {
+        let lives = (START_LIVES as i32 + opts.difficulty.life_bonus()).max(1) as u32;
         Blast {
             character,
             px: GW / 2,
@@ -48,8 +50,9 @@ impl Blast {
             tick: 0,
             spawn_timer: 2,
             score: 0,
-            lives: START_LIVES,
+            lives,
             over: false,
+            opts,
             rng: Rng::new(seed),
         }
     }
@@ -70,7 +73,10 @@ impl Blast {
         let x = self.rng.below(GW);
         let gem = self.rng.chance(1, 8);
         self.enemies.push(Enemy { x, y: 0, gem });
-        self.spawn_timer = (9u32.saturating_sub(level)).max(3);
+        // Harder waves arrive sooner (and keep a slightly lower floor).
+        let notch = self.opts.difficulty.notch();
+        let floor = (3 - notch).max(2);
+        self.spawn_timer = (9i32 - level as i32 - notch).max(floor) as u32;
     }
 }
 
@@ -86,7 +92,7 @@ impl MiniGame for Blast {
 
     fn restart(&mut self) {
         let seed = self.rng.next_u64();
-        *self = Blast::new(self.character, seed);
+        *self = Blast::new(self.character, seed, self.opts);
     }
 
     fn score(&self) -> u32 {
@@ -210,6 +216,10 @@ impl MiniGame for Blast {
 mod tests {
     use super::*;
 
+    fn opts() -> GameOptions {
+        GameOptions::default()
+    }
+
     fn colors() -> ItemColors {
         ItemColors {
             good: Color::Reset,
@@ -220,7 +230,7 @@ mod tests {
 
     #[test]
     fn a_shot_destroys_an_invader() {
-        let mut g = Blast::new(Character::Blob, 1);
+        let mut g = Blast::new(Character::Blob, 1, opts());
         g.enemies = vec![Enemy {
             x: 5,
             y: 4,
@@ -235,7 +245,7 @@ mod tests {
 
     #[test]
     fn an_invader_reaching_the_ship_costs_a_life() {
-        let mut g = Blast::new(Character::Fox, 2);
+        let mut g = Blast::new(Character::Fox, 2, opts());
         g.enemies = vec![Enemy {
             x: 5,
             y: PLAYER_ROW,
@@ -249,7 +259,7 @@ mod tests {
 
     #[test]
     fn fire_respects_cooldown() {
-        let mut g = Blast::new(Character::Cat, 3);
+        let mut g = Blast::new(Character::Cat, 3, opts());
         g.fire();
         g.fire(); // blocked by cooldown
         assert_eq!(g.bullets.len(), 1);
@@ -257,7 +267,7 @@ mod tests {
 
     #[test]
     fn movement_stays_in_bounds() {
-        let mut g = Blast::new(Character::Ghost, 4);
+        let mut g = Blast::new(Character::Ghost, 4, opts());
         for _ in 0..GW * 2 {
             g.input(Input::Left);
         }
@@ -270,7 +280,7 @@ mod tests {
 
     #[test]
     fn render_has_stable_dimensions() {
-        let mut g = Blast::new(Character::Robot, 5);
+        let mut g = Blast::new(Character::Robot, 5, opts());
         g.enemies = vec![Enemy {
             x: 2,
             y: 3,
@@ -287,7 +297,7 @@ mod tests {
 
     #[test]
     fn many_steps_never_panic() {
-        let mut g = Blast::new(Character::Jellyfish, 0xB1A5);
+        let mut g = Blast::new(Character::Jellyfish, 0xB1A5, opts());
         for i in 0..5000 {
             match i % 4 {
                 0 => g.input(Input::Left),
