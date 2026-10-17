@@ -21,8 +21,9 @@ jobs:
         include:
           - os: macos-14
             target: aarch64-apple-darwin
-          - os: macos-13
-            target: x86_64-apple-darwin
+          # Intel macOS (macos-13) is dropped: its hosted runners are heavily
+          # backlogged and block the whole release. Intel-mac users can
+          # `cargo install --git …` or build from source until it's restored.
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
     steps:
@@ -136,7 +137,6 @@ jobs:
           base="https://github.com/punitmishra/termling/releases/download/${GITHUB_REF_NAME}"
           sha() { cut -d' ' -f1 "dist/termling-${version}-$1.tar.gz.sha256"; }
           sha_arm="$(sha aarch64-apple-darwin)"
-          sha_intel="$(sha x86_64-apple-darwin)"
           sha_linux="$(sha x86_64-unknown-linux-gnu)"
 
           mkdir -p tap/Formula
@@ -148,13 +148,10 @@ jobs:
             license "MIT"
 
             on_macos do
+              # Apple Silicon only — Intel macOS builds are not published yet.
               on_arm do
                 url "${base}/termling-${version}-aarch64-apple-darwin.tar.gz"
                 sha256 "${sha_arm}"
-              end
-              on_intel do
-                url "${base}/termling-${version}-x86_64-apple-darwin.tar.gz"
-                sha256 "${sha_intel}"
               end
             end
 
