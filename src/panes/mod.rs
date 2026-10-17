@@ -236,6 +236,18 @@ pub(crate) fn short(e: &str) -> String {
     first.chars().take(56).collect()
 }
 
+/// How many headlines the news panes should show: `TERMLING_NEWS_COUNT`,
+/// clamped to `1..=12`, defaulting to 6 when unset or unparseable. Shared by the
+/// Hacker News and Lobsters panes.
+#[cfg(feature = "online")]
+pub(crate) fn news_count() -> usize {
+    std::env::var("TERMLING_NEWS_COUNT")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(6)
+        .clamp(1, 12)
+}
+
 /// Clip a string to `max` columns (by char), adding an ellipsis when cut. Shared
 /// by the headline panes.
 #[cfg(feature = "online")]

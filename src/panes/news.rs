@@ -14,13 +14,10 @@ use std::collections::VecDeque;
 
 use serde::Deserialize;
 
-use super::{clip, line, short, Pane, PaneKind};
+use super::{clip, line, news_count, short, Pane, PaneKind};
 use crate::doodle::{Row, Seg};
 use crate::net::{self, FetchResult, FetchSpec};
 use crate::theme::Theme;
-
-/// How many headlines to show.
-const WANT: usize = 6;
 
 /// Frames between full refreshes (~10 min at ~10 ticks/second).
 const REFRESH_FRAMES: u64 = 10 * 60 * 10;
@@ -28,6 +25,8 @@ const REFRESH_FRAMES: u64 = 10 * 60 * 10;
 const TOP_URL: &str = "https://hacker-news.firebaseio.com/v0/topstories.json";
 
 pub struct News {
+    /// How many headlines to show (`TERMLING_NEWS_COUNT`, clamped 1..=12).
+    want: usize,
     frame: u64,
     /// Frame the current cycle's top-list fetch began.
     fetched_at: Option<u64>,
@@ -50,6 +49,7 @@ pub struct News {
 impl News {
     pub fn new() -> News {
         News {
+            want: news_count(),
             frame: 0,
             fetched_at: None,
             cycle_active: false,
@@ -129,7 +129,7 @@ impl Pane for News {
             // Gather the new set off to the side; the currently-shown `stories`
             // stay on screen until this cycle finishes.
             self.staging.clear();
-            self.queue = ids.into_iter().take(WANT).collect();
+            self.queue = ids.into_iter().take(self.want).collect();
             self.error = None;
         } else if let Ok(item) = serde_json::from_str::<HnItem>(body) {
             if let Some(title) = item.title {
@@ -212,8 +212,24 @@ mod tests {
             body: Ok(TOP_SAMPLE.into()),
         });
         assert!(n.have_top);
-        assert_eq!(n.queue.len(), WANT);
+        // The sample top list has 8 ids; the default count (6) caps the queue.
+        assert_eq!(n.queue.len(), n.want);
         assert_eq!(n.queue.front().copied(), Some(38000));
+    }
+
+    #[test]
+    fn news_count_env_clamps_to_range() {
+        use crate::panes::news_count;
+        std::env::set_var("TERMLING_NEWS_COUNT", "3");
+        assert_eq!(news_count(), 3);
+        std::env::set_var("TERMLING_NEWS_COUNT", "99"); // over the max
+        assert_eq!(news_count(), 12);
+        std::env::set_var("TERMLING_NEWS_COUNT", "0"); // under the min
+        assert_eq!(news_count(), 1);
+        std::env::set_var("TERMLING_NEWS_COUNT", "junk"); // unparseable → default
+        assert_eq!(news_count(), 6);
+        std::env::remove_var("TERMLING_NEWS_COUNT");
+        assert_eq!(news_count(), 6); // unset → default
     }
 
     #[test]

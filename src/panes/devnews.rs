@@ -8,13 +8,10 @@
 
 use serde::Deserialize;
 
-use super::{clip, line, short, Pane, PaneKind};
+use super::{clip, line, news_count, short, Pane, PaneKind};
 use crate::doodle::{Row, Seg};
 use crate::net::{self, FetchResult, FetchSpec};
 use crate::theme::Theme;
-
-/// How many stories to show.
-const WANT: usize = 6;
 
 /// Frames between refreshes (~10 min at ~10 ticks/second).
 const REFRESH_FRAMES: u64 = 10 * 60 * 10;
@@ -27,6 +24,8 @@ struct Story {
 }
 
 pub struct DevNews {
+    /// How many stories to show (`TERMLING_NEWS_COUNT`, clamped 1..=12).
+    want: usize,
     frame: u64,
     fetched_at: Option<u64>,
     pending: bool,
@@ -37,6 +36,7 @@ pub struct DevNews {
 impl DevNews {
     pub fn new() -> DevNews {
         DevNews {
+            want: news_count(),
             frame: 0,
             fetched_at: None,
             pending: false,
@@ -80,7 +80,7 @@ impl Pane for DevNews {
         self.pending = false;
         match &result.body {
             Err(e) => self.error = Some(short(e)),
-            Ok(body) => match parse(body) {
+            Ok(body) => match parse(body, self.want) {
                 Ok(s) if s.is_empty() => self.error = Some("no stories".into()),
                 Ok(s) => {
                     self.stories = s;
@@ -131,12 +131,12 @@ struct LobStory {
     score: i64,
 }
 
-fn parse(body: &str) -> Result<Vec<Story>, String> {
+fn parse(body: &str, want: usize) -> Result<Vec<Story>, String> {
     let raw: Vec<LobStory> = serde_json::from_str(body).map_err(|e| short(&e.to_string()))?;
     Ok(raw
         .into_iter()
         .filter(|s| !s.title.is_empty())
-        .take(WANT)
+        .take(want)
         .map(|s| Story {
             title: s.title,
             score: s.score,
@@ -164,10 +164,12 @@ mod tests {
 
     #[test]
     fn parses_titles_and_scores_skipping_blank() {
-        let s = parse(SAMPLE).expect("parse");
+        let s = parse(SAMPLE, 6).expect("parse");
         assert_eq!(s.len(), 2);
         assert_eq!(s[0].title, "Rust 2.0 announced");
         assert_eq!(s[0].score, 142);
+        // The count caps the list: ask for one and only the top story survives.
+        assert_eq!(parse(SAMPLE, 1).expect("parse").len(), 1);
     }
 
     #[test]
