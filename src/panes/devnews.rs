@@ -8,13 +8,10 @@
 
 use serde::Deserialize;
 
-use super::{clip, line, short, Pane, PaneKind};
+use super::{clip, line, news_count, short, Pane, PaneKind, RefreshTimer};
 use crate::doodle::{Row, Seg};
 use crate::net::{self, FetchResult, FetchSpec};
 use crate::theme::Theme;
-
-/// How many stories to show.
-const WANT: usize = 6;
 
 /// Frames between refreshes (~10 min at ~10 ticks/second).
 const REFRESH_FRAMES: u64 = 10 * 60 * 10;
@@ -27,8 +24,10 @@ struct Story {
 }
 
 pub struct DevNews {
-    frame: u64,
-    fetched_at: Option<u64>,
+    /// How many stories to show (`TERMLING_NEWS_COUNT`, clamped 1..=12).
+    want: usize,
+    /// Staleness clock: when to re-fetch.
+    timer: RefreshTimer,
     pending: bool,
     stories: Vec<Story>,
     error: Option<String>,
@@ -37,8 +36,8 @@ pub struct DevNews {
 impl DevNews {
     pub fn new() -> DevNews {
         DevNews {
-            frame: 0,
-            fetched_at: None,
+            want: news_count(),
+            timer: RefreshTimer::new(REFRESH_FRAMES),
             pending: false,
             stories: Vec::new(),
             error: None,
@@ -46,10 +45,7 @@ impl DevNews {
     }
 
     fn due(&self) -> bool {
-        match self.fetched_at {
-            None => true,
-            Some(f) => self.frame.saturating_sub(f) >= REFRESH_FRAMES,
-        }
+        self.timer.due()
     }
 }
 
@@ -59,12 +55,12 @@ impl Pane for DevNews {
     }
 
     fn tick(&mut self, frame: u64) {
-        self.frame = frame;
+        self.timer.tick(frame);
     }
 
     fn refresh(&mut self) {
         // Mark the cached stories stale so the next poll re-fetches.
-        self.fetched_at = None;
+        self.timer.reset();
     }
 
     fn poll_fetch(&mut self) -> Option<FetchSpec> {
@@ -72,7 +68,7 @@ impl Pane for DevNews {
             return None;
         }
         self.pending = true;
-        self.fetched_at = Some(self.frame);
+        self.timer.mark();
         Some(FetchSpec::get(PaneKind::DevNews, URL))
     }
 
@@ -80,7 +76,7 @@ impl Pane for DevNews {
         self.pending = false;
         match &result.body {
             Err(e) => self.error = Some(short(e)),
-            Ok(body) => match parse(body) {
+            Ok(body) => match parse(body, self.want) {
                 Ok(s) if s.is_empty() => self.error = Some("no stories".into()),
                 Ok(s) => {
                     self.stories = s;
@@ -131,12 +127,12 @@ struct LobStory {
     score: i64,
 }
 
-fn parse(body: &str) -> Result<Vec<Story>, String> {
+fn parse(body: &str, want: usize) -> Result<Vec<Story>, String> {
     let raw: Vec<LobStory> = serde_json::from_str(body).map_err(|e| short(&e.to_string()))?;
     Ok(raw
         .into_iter()
         .filter(|s| !s.title.is_empty())
-        .take(WANT)
+        .take(want)
         .map(|s| Story {
             title: s.title,
             score: s.score,
@@ -164,10 +160,12 @@ mod tests {
 
     #[test]
     fn parses_titles_and_scores_skipping_blank() {
-        let s = parse(SAMPLE).expect("parse");
+        let s = parse(SAMPLE, 6).expect("parse");
         assert_eq!(s.len(), 2);
         assert_eq!(s[0].title, "Rust 2.0 announced");
         assert_eq!(s[0].score, 142);
+        // The count caps the list: ask for one and only the top story survives.
+        assert_eq!(parse(SAMPLE, 1).expect("parse").len(), 1);
     }
 
     #[test]

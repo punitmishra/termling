@@ -14,7 +14,7 @@
 
 use serde::Deserialize;
 
-use super::{line, short, Pane, PaneKind};
+use super::{line, short, Pane, PaneKind, RefreshTimer};
 use crate::doodle::Row;
 use crate::net::{self, FetchResult, FetchSpec};
 use crate::theme::Theme;
@@ -40,9 +40,10 @@ pub struct Weather {
     lon: f64,
     /// Whether `TERMLING_WEATHER` was set (vs. the default) — shown as a hint.
     custom_loc: bool,
-    frame: u64,
-    /// Frame the in-flight/last fetch began; `None` until the first fetch.
-    fetched_at: Option<u64>,
+    /// `TERMLING_WEATHER_UNITS=f` → request & label °F / mph instead of °C / km/h.
+    fahrenheit: bool,
+    /// Staleness clock: when to re-fetch.
+    timer: RefreshTimer,
     /// A request is outstanding — don't queue another until it returns.
     pending: bool,
     reading: Option<Reading>,
@@ -56,8 +57,8 @@ impl Weather {
             lat,
             lon,
             custom_loc,
-            frame: 0,
-            fetched_at: None,
+            fahrenheit: fahrenheit_requested(),
+            timer: RefreshTimer::new(REFRESH_FRAMES),
             pending: false,
             reading: None,
             error: None,
@@ -65,18 +66,20 @@ impl Weather {
     }
 
     fn url(&self) -> String {
-        format!(
+        let mut url = format!(
             "https://api.open-meteo.com/v1/forecast?latitude={:.4}&longitude={:.4}\
              &current=temperature_2m,weather_code,wind_speed_10m",
             self.lat, self.lon
-        )
+        );
+        // Open-Meteo defaults to Celsius + km/h; opt into imperial when asked.
+        if self.fahrenheit {
+            url.push_str("&temperature_unit=fahrenheit&wind_speed_unit=mph");
+        }
+        url
     }
 
     fn due(&self) -> bool {
-        match self.fetched_at {
-            None => true,
-            Some(f) => self.frame.saturating_sub(f) >= REFRESH_FRAMES,
-        }
+        self.timer.due()
     }
 }
 
@@ -86,12 +89,12 @@ impl Pane for Weather {
     }
 
     fn tick(&mut self, frame: u64) {
-        self.frame = frame;
+        self.timer.tick(frame);
     }
 
     fn refresh(&mut self) {
         // Mark the cached reading stale so the next poll re-fetches.
-        self.fetched_at = None;
+        self.timer.reset();
     }
 
     fn poll_fetch(&mut self) -> Option<FetchSpec> {
@@ -99,7 +102,7 @@ impl Pane for Weather {
             return None;
         }
         self.pending = true;
-        self.fetched_at = Some(self.frame);
+        self.timer.mark();
         Some(FetchSpec::get(PaneKind::Weather, self.url()))
     }
 
@@ -120,13 +123,20 @@ impl Pane for Weather {
     fn render(&self, _width: u16, _height: u16, theme: &Theme) -> Vec<Row> {
         let mut rows = Vec::new();
         if let Some(r) = &self.reading {
+            // Prefer the units the API echoes; fall back to what we requested so
+            // the label is right even if `current_units` is absent.
+            let (temp_fb, wind_fb) = if self.fahrenheit {
+                ("°F", "mph")
+            } else {
+                ("°C", "km/h")
+            };
             rows.push(line(
-                format!("{:.1} {}", r.temp, nonempty(&r.temp_unit, "°")),
+                format!("{:.1} {}", r.temp, nonempty(&r.temp_unit, temp_fb)),
                 theme.accent,
             ));
             rows.push(line(weather_text(r.code), theme.gem));
             rows.push(line(
-                format!("wind {:.1} {}", r.wind, nonempty(&r.wind_unit, "km/h")),
+                format!("wind {:.1} {}", r.wind, nonempty(&r.wind_unit, wind_fb)),
                 theme.dim,
             ));
         } else if let Some(e) = &self.error {
@@ -160,6 +170,17 @@ fn parse_latlon() -> (f64, f64, bool) {
         }
     }
     (DEFAULT_LATLON.0, DEFAULT_LATLON.1, false)
+}
+
+/// Whether `TERMLING_WEATHER_UNITS` asks for Fahrenheit. Parsed case-insensitively:
+/// `f` (or `fahrenheit`) → true; anything else (incl. unset) → Celsius.
+fn fahrenheit_requested() -> bool {
+    std::env::var("TERMLING_WEATHER_UNITS")
+        .map(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            v == "f" || v == "fahrenheit"
+        })
+        .unwrap_or(false)
 }
 
 #[derive(Deserialize)]
@@ -280,11 +301,36 @@ mod tests {
     #[test]
     fn refresh_marks_due_again() {
         let mut w = Weather::new();
-        w.frame = 1;
-        w.fetched_at = Some(1); // just fetched → not due
+        w.timer.tick(1);
+        w.timer.mark(); // just fetched → not due
         assert!(!w.due());
         w.refresh();
         assert!(w.due()); // `r` forces a re-fetch
+    }
+
+    #[test]
+    fn fahrenheit_units_change_the_url_and_labels() {
+        let mut w = Weather::new();
+        // Imperial: the request carries the unit params and the fallback labels
+        // switch to °F / mph (used when the API omits `current_units`).
+        w.fahrenheit = true;
+        let url = w.url();
+        assert!(url.contains("temperature_unit=fahrenheit"), "url: {url}");
+        assert!(url.contains("wind_speed_unit=mph"), "url: {url}");
+        w.on_data(&FetchResult {
+            pane: PaneKind::Weather,
+            // No `current_units` block → the fallback label must show.
+            body: Ok(r#"{"current":{"temperature_2m":70.0,"weather_code":0,
+                "wind_speed_10m":5.0}}"#
+                .into()),
+        });
+        let out = text(&w.render(40, 12, &THEMES[0]));
+        assert!(out.contains("°F"), "°F label: {out}");
+        assert!(out.contains("mph"), "mph label: {out}");
+
+        // Celsius (the default) requests neither override.
+        w.fahrenheit = false;
+        assert!(!w.url().contains("fahrenheit"));
     }
 
     #[test]

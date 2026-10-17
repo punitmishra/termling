@@ -14,13 +14,10 @@ use std::collections::VecDeque;
 
 use serde::Deserialize;
 
-use super::{clip, line, short, Pane, PaneKind};
+use super::{clip, line, news_count, short, Pane, PaneKind, RefreshTimer};
 use crate::doodle::{Row, Seg};
 use crate::net::{self, FetchResult, FetchSpec};
 use crate::theme::Theme;
-
-/// How many headlines to show.
-const WANT: usize = 6;
 
 /// Frames between full refreshes (~10 min at ~10 ticks/second).
 const REFRESH_FRAMES: u64 = 10 * 60 * 10;
@@ -28,9 +25,10 @@ const REFRESH_FRAMES: u64 = 10 * 60 * 10;
 const TOP_URL: &str = "https://hacker-news.firebaseio.com/v0/topstories.json";
 
 pub struct News {
-    frame: u64,
-    /// Frame the current cycle's top-list fetch began.
-    fetched_at: Option<u64>,
+    /// How many headlines to show (`TERMLING_NEWS_COUNT`, clamped 1..=12).
+    want: usize,
+    /// Staleness clock: when to start a fresh fetch cycle.
+    timer: RefreshTimer,
     /// A cycle (top list, then items) is in progress.
     cycle_active: bool,
     /// We've received the id list for the current cycle.
@@ -50,8 +48,8 @@ pub struct News {
 impl News {
     pub fn new() -> News {
         News {
-            frame: 0,
-            fetched_at: None,
+            want: news_count(),
+            timer: RefreshTimer::new(REFRESH_FRAMES),
             cycle_active: false,
             have_top: false,
             pending: false,
@@ -63,10 +61,7 @@ impl News {
     }
 
     fn stale(&self) -> bool {
-        match self.fetched_at {
-            None => true,
-            Some(f) => self.frame.saturating_sub(f) >= REFRESH_FRAMES,
-        }
+        self.timer.due()
     }
 }
 
@@ -76,12 +71,12 @@ impl Pane for News {
     }
 
     fn tick(&mut self, frame: u64) {
-        self.frame = frame;
+        self.timer.tick(frame);
     }
 
     fn refresh(&mut self) {
         // Force a fresh cycle on the next poll by marking the cache stale.
-        self.fetched_at = None;
+        self.timer.reset();
     }
 
     fn poll_fetch(&mut self) -> Option<FetchSpec> {
@@ -98,7 +93,7 @@ impl Pane for News {
         }
         if !self.have_top {
             self.pending = true;
-            self.fetched_at = Some(self.frame);
+            self.timer.mark();
             return Some(FetchSpec::get(PaneKind::News, TOP_URL));
         }
         if let Some(id) = self.queue.pop_front() {
@@ -129,7 +124,7 @@ impl Pane for News {
             // Gather the new set off to the side; the currently-shown `stories`
             // stay on screen until this cycle finishes.
             self.staging.clear();
-            self.queue = ids.into_iter().take(WANT).collect();
+            self.queue = ids.into_iter().take(self.want).collect();
             self.error = None;
         } else if let Ok(item) = serde_json::from_str::<HnItem>(body) {
             if let Some(title) = item.title {
@@ -212,8 +207,22 @@ mod tests {
             body: Ok(TOP_SAMPLE.into()),
         });
         assert!(n.have_top);
-        assert_eq!(n.queue.len(), WANT);
+        // The sample top list has 8 ids; the queue is capped at `want` — assert
+        // against want.min(8) so this holds for any ambient TERMLING_NEWS_COUNT.
+        assert_eq!(n.queue.len(), n.want.min(8));
         assert_eq!(n.queue.front().copied(), Some(38000));
+    }
+
+    #[test]
+    fn news_count_clamps_to_range() {
+        // Test the pure parse+clamp directly — no process-global env mutation, so
+        // this can't race with other tests reading TERMLING_NEWS_COUNT in parallel.
+        use crate::panes::clamp_news_count;
+        assert_eq!(clamp_news_count(Some("3")), 3);
+        assert_eq!(clamp_news_count(Some("99")), 12); // over the max
+        assert_eq!(clamp_news_count(Some("0")), 1); // under the min
+        assert_eq!(clamp_news_count(Some(" junk ")), 6); // unparseable → default
+        assert_eq!(clamp_news_count(None), 6); // unset → default
     }
 
     #[test]
@@ -322,8 +331,8 @@ mod tests {
     #[test]
     fn refresh_marks_stale() {
         let mut n = News::new();
-        n.frame = 1;
-        n.fetched_at = Some(1); // just fetched → not stale
+        n.timer.tick(1);
+        n.timer.mark(); // just fetched → not stale
         assert!(!n.stale());
         n.refresh();
         assert!(n.stale()); // `r` forces a fresh cycle

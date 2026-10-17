@@ -31,21 +31,27 @@ pub fn draw(f: &mut Frame, app: &App) {
 /// sidebar of pane names on the left, the content area tiled per the current
 /// [`PaneLayout`] (`s` cycles: focused → grid → columns → rows) on the right.
 fn draw_dashboard(f: &mut Frame, app: &App, area: Rect) {
-    // Reserve a top band for the creature so it never fully disappears behind the
-    // dashboard; the rest is the dashboard body.
-    let split = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(10), Constraint::Min(0)])
-        .split(area);
-    draw_creature_strip(f, app, split[0]);
-
     let theme = app.theme();
     let dash = app.dashboard();
+
+    // Reserve a top band for the creature so it never fully disappears behind the
+    // dashboard; the rest is the dashboard body. When the strip is hidden (`b`),
+    // the panes get the whole area instead.
+    let body = if dash.strip_hidden() {
+        area
+    } else {
+        let split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(10), Constraint::Min(0)])
+            .split(area);
+        draw_creature_strip(f, app, split[0]);
+        split[1]
+    };
 
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(16), Constraint::Min(0)])
-        .split(split[1]);
+        .split(body);
     draw_sidebar(f, dash, cols[0], &theme);
 
     let content = cols[1];
@@ -168,6 +174,14 @@ fn draw_sidebar(f: &mut Frame, dash: &Dashboard, area: Rect, theme: &crate::them
     lines.push(Line::raw(""));
     lines.push(Line::styled(
         format!("s {}", dash.layout().label()),
+        Style::default().fg(theme.dim),
+    ));
+    lines.push(Line::styled(
+        if dash.strip_hidden() {
+            "b show buddy"
+        } else {
+            "b hide buddy"
+        },
         Style::default().fg(theme.dim),
     ));
     lines.push(Line::styled("r refresh", Style::default().fg(theme.dim)));

@@ -16,8 +16,11 @@
 
 mod bg;
 mod buddy_insights;
+mod clock;
 mod git;
 mod system;
+
+use std::path::PathBuf;
 
 use crate::doodle::{Row, Seg};
 use crate::net::{FetchResult, FetchSpec};
@@ -44,6 +47,8 @@ pub enum PaneKind {
     Welcome,
     /// A local git-repository summary for the current working dir.
     Git,
+    /// Local date, time, and a current-month calendar.
+    Clock,
     /// Local machine vitals: load average, uptime, memory.
     System,
     /// A read-only window onto the buddy brain's learned habits.
@@ -73,6 +78,7 @@ impl PaneKind {
         let mut kinds = vec![
             PaneKind::Welcome,
             PaneKind::Git,
+            PaneKind::Clock,
             PaneKind::System,
             PaneKind::BuddyInsights,
         ];
@@ -94,6 +100,7 @@ impl PaneKind {
         match name {
             "welcome" => Some(PaneKind::Welcome),
             "git" => Some(PaneKind::Git),
+            "clock" => Some(PaneKind::Clock),
             "system" => Some(PaneKind::System),
             "buddy" => Some(PaneKind::BuddyInsights),
             #[cfg(feature = "online")]
@@ -115,6 +122,7 @@ impl PaneKind {
         match self {
             PaneKind::Welcome => "welcome",
             PaneKind::Git => "git",
+            PaneKind::Clock => "clock",
             PaneKind::System => "system",
             PaneKind::BuddyInsights => "buddy",
             #[cfg(feature = "online")]
@@ -135,6 +143,7 @@ impl PaneKind {
         match self {
             PaneKind::Welcome => false,
             PaneKind::Git => false,
+            PaneKind::Clock => false,
             PaneKind::System => false,
             PaneKind::BuddyInsights => false,
             #[cfg(feature = "online")]
@@ -151,6 +160,7 @@ impl PaneKind {
         match self {
             PaneKind::Welcome => Box::new(Welcome),
             PaneKind::Git => Box::new(git::GitPane::new()),
+            PaneKind::Clock => Box::new(clock::ClockPane::new()),
             PaneKind::System => Box::new(system::SystemPane::new()),
             PaneKind::BuddyInsights => Box::new(buddy_insights::BuddyPane::new()),
             #[cfg(feature = "online")]
@@ -228,6 +238,23 @@ pub(crate) fn short(e: &str) -> String {
     first.chars().take(56).collect()
 }
 
+/// How many headlines the news panes should show: `TERMLING_NEWS_COUNT`,
+/// clamped to `1..=12`, defaulting to 6 when unset or unparseable. Shared by the
+/// Hacker News and Lobsters panes.
+#[cfg(feature = "online")]
+pub(crate) fn news_count() -> usize {
+    clamp_news_count(std::env::var("TERMLING_NEWS_COUNT").ok().as_deref())
+}
+
+/// The pure parse+clamp behind [`news_count`] — split out so it can be tested
+/// without mutating the process-global env (which races with parallel tests).
+#[cfg(feature = "online")]
+pub(crate) fn clamp_news_count(raw: Option<&str>) -> usize {
+    raw.and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(6)
+        .clamp(1, 12)
+}
+
 /// Clip a string to `max` columns (by char), adding an ellipsis when cut. Shared
 /// by the headline panes.
 #[cfg(feature = "online")]
@@ -239,6 +266,55 @@ pub(crate) fn clip(s: &str, max: usize) -> String {
     let mut out: String = s.chars().take(take).collect();
     out.push('…');
     out
+}
+
+/// The staleness clock shared by the online data panes. Each one advances it
+/// from [`tick`](Pane::tick), asks [`due`](RefreshTimer::due) whether its data
+/// has gone stale, [`mark`](RefreshTimer::mark)s the frame a fetch begins, and
+/// [`reset`](RefreshTimer::reset)s it to force a re-fetch (the `r` key). This is
+/// a behaviour-preserving extraction of the identical `frame`/`fetched_at`/
+/// `due()` trio the panes each used to carry.
+#[cfg(feature = "online")]
+pub(crate) struct RefreshTimer {
+    frame: u64,
+    /// Frame the in-flight/last fetch began; `None` until the first fetch.
+    fetched_at: Option<u64>,
+    /// Frames between refreshes.
+    period: u64,
+}
+
+#[cfg(feature = "online")]
+impl RefreshTimer {
+    pub(crate) fn new(period: u64) -> RefreshTimer {
+        RefreshTimer {
+            frame: 0,
+            fetched_at: None,
+            period,
+        }
+    }
+
+    /// Advance the animation clock (from [`Pane::tick`]).
+    pub(crate) fn tick(&mut self, frame: u64) {
+        self.frame = frame;
+    }
+
+    /// Whether the data is due: never fetched, or the period has elapsed.
+    pub(crate) fn due(&self) -> bool {
+        match self.fetched_at {
+            None => true,
+            Some(f) => self.frame.saturating_sub(f) >= self.period,
+        }
+    }
+
+    /// Stamp the current frame as the moment a fetch began.
+    pub(crate) fn mark(&mut self) {
+        self.fetched_at = Some(self.frame);
+    }
+
+    /// Force the next [`due`](RefreshTimer::due) to be true (the `r` key).
+    pub(crate) fn reset(&mut self) {
+        self.fetched_at = None;
+    }
 }
 
 /// How the dashboard content area is tiled.
@@ -274,6 +350,18 @@ impl Layout {
         }
     }
 
+    /// Resolve a layout from its [`label`](Layout::label) — for restoring the
+    /// persisted choice. Unknown strings → `None`.
+    pub fn from_label(s: &str) -> Option<Layout> {
+        match s {
+            "focused" => Some(Layout::Focused),
+            "grid" => Some(Layout::Grid),
+            "columns" => Some(Layout::Columns),
+            "rows" => Some(Layout::Rows),
+            _ => None,
+        }
+    }
+
     /// How many panes this layout shows at once (a window around the selection).
     pub fn cells(self) -> usize {
         match self {
@@ -291,18 +379,52 @@ pub struct Dashboard {
     panes: Vec<Box<dyn Pane>>,
     sel: usize,
     layout: Layout,
+    /// Whether the creature strip atop the dashboard is hidden (the `b` key),
+    /// giving the whole area to the panes. Persisted across restarts.
+    strip_hidden: bool,
 }
 
 impl Dashboard {
     pub fn new() -> Dashboard {
         let kinds = configured_kinds();
         let panes = kinds.iter().map(|k| k.make()).collect();
+        // Restore the last selection (by name, so it survives a changed pane set),
+        // layout, and strip visibility; fall back to the defaults on anything odd.
+        let (saved_name, saved_layout, strip_hidden) = load_dash();
+        let sel = saved_name
+            .as_deref()
+            .and_then(PaneKind::from_name)
+            .and_then(|k| kinds.iter().position(|&x| x == k))
+            .unwrap_or(0);
         Dashboard {
             kinds,
             panes,
-            sel: 0,
-            layout: Layout::Focused,
+            sel,
+            layout: saved_layout.unwrap_or(Layout::Focused),
+            strip_hidden,
         }
+    }
+
+    /// Persist the current selection (by name), layout, and strip visibility.
+    /// Called whenever any of them change. All fs is best-effort — never panics.
+    fn save(&self) {
+        let name = self
+            .kinds
+            .get(self.sel)
+            .map(|k| k.name())
+            .unwrap_or("welcome");
+        save_dash(name, self.layout, self.strip_hidden);
+    }
+
+    /// Whether the creature strip is hidden (full-height dashboard).
+    pub fn strip_hidden(&self) -> bool {
+        self.strip_hidden
+    }
+
+    /// Show/hide the creature strip (the `b` key), persisting the choice.
+    pub fn toggle_strip(&mut self) {
+        self.strip_hidden = !self.strip_hidden;
+        self.save();
     }
 
     pub fn kinds(&self) -> &[PaneKind] {
@@ -320,11 +442,13 @@ impl Dashboard {
     /// Step to the next content layout (the `s` key).
     pub fn cycle_layout(&mut self) {
         self.layout = self.layout.next();
+        self.save();
     }
 
     pub fn next(&mut self) {
         if !self.panes.is_empty() {
             self.sel = (self.sel + 1) % self.panes.len();
+            self.save();
         }
     }
 
@@ -332,6 +456,7 @@ impl Dashboard {
         if !self.panes.is_empty() {
             let n = self.panes.len();
             self.sel = (self.sel + n - 1) % n;
+            self.save();
         }
     }
 
@@ -381,6 +506,50 @@ impl Default for Dashboard {
     }
 }
 
+// --- dashboard UX persistence ----------------------------------------------
+//
+// The selected pane (by name) + layout + strip visibility live in one tiny file:
+// "<pane> <layout> <strip>". No serde — the same hand-rolled ethos as the XP
+// state in `app.rs`. All reads/writes are best-effort and never panic.
+
+/// `${XDG_STATE_HOME:-~/.local/state}/termling/dashboard`, or `None` under test
+/// so unit tests stay hermetic and never touch the user's real state file.
+fn dash_state_path() -> Option<PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
+    Some(base.join("termling").join("dashboard"))
+}
+
+/// Restore `(selected pane name, layout, strip hidden)`, defaulting each field
+/// independently so a partial or stale file still yields a usable dashboard.
+fn load_dash() -> (Option<String>, Option<Layout>, bool) {
+    let parse = || -> Option<(Option<String>, Option<Layout>, bool)> {
+        let text = std::fs::read_to_string(dash_state_path()?).ok()?;
+        let mut it = text.split_whitespace();
+        let name = it.next().map(str::to_string);
+        let layout = it.next().and_then(Layout::from_label);
+        let strip = matches!(it.next(), Some("1"));
+        Some((name, layout, strip))
+    };
+    parse().unwrap_or((None, None, false))
+}
+
+fn save_dash(name: &str, layout: Layout, strip_hidden: bool) {
+    if let Some(path) = dash_state_path() {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(
+            path,
+            format!("{name} {} {}", layout.label(), strip_hidden as u8),
+        );
+    }
+}
+
 /// The built-in welcome tile: a short orientation + what the dashboard can do.
 struct Welcome;
 
@@ -395,6 +564,7 @@ impl Pane for Welcome {
             line("", theme.dim),
             line("↑/↓  pick a pane", theme.dim),
             line("s    cycle layout", theme.dim),
+            line("b    hide/show buddy", theme.dim),
             line("r    refresh", theme.dim),
             line("esc  back to the creature", theme.dim),
             line("", theme.dim),
@@ -438,6 +608,22 @@ mod tests {
         assert_eq!(dash.layout(), Layout::Rows);
         dash.cycle_layout();
         assert_eq!(dash.layout(), Layout::Focused);
+    }
+
+    #[test]
+    fn strip_toggle_flips_and_layout_labels_round_trip() {
+        let mut dash = Dashboard::new();
+        // Under test the state file is off-disk, so it starts shown.
+        assert!(!dash.strip_hidden());
+        dash.toggle_strip();
+        assert!(dash.strip_hidden());
+        dash.toggle_strip();
+        assert!(!dash.strip_hidden());
+        // Every layout label resolves back to itself (persistence round-trip).
+        for l in [Layout::Focused, Layout::Grid, Layout::Columns, Layout::Rows] {
+            assert_eq!(Layout::from_label(l.label()), Some(l));
+        }
+        assert_eq!(Layout::from_label("nonsense"), None);
     }
 
     #[test]
