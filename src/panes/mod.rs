@@ -16,6 +16,7 @@
 
 mod bg;
 mod buddy_insights;
+mod clock;
 mod git;
 mod system;
 
@@ -44,6 +45,8 @@ pub enum PaneKind {
     Welcome,
     /// A local git-repository summary for the current working dir.
     Git,
+    /// Local date, time, and a current-month calendar.
+    Clock,
     /// Local machine vitals: load average, uptime, memory.
     System,
     /// A read-only window onto the buddy brain's learned habits.
@@ -73,6 +76,7 @@ impl PaneKind {
         let mut kinds = vec![
             PaneKind::Welcome,
             PaneKind::Git,
+            PaneKind::Clock,
             PaneKind::System,
             PaneKind::BuddyInsights,
         ];
@@ -94,6 +98,7 @@ impl PaneKind {
         match name {
             "welcome" => Some(PaneKind::Welcome),
             "git" => Some(PaneKind::Git),
+            "clock" => Some(PaneKind::Clock),
             "system" => Some(PaneKind::System),
             "buddy" => Some(PaneKind::BuddyInsights),
             #[cfg(feature = "online")]
@@ -115,6 +120,7 @@ impl PaneKind {
         match self {
             PaneKind::Welcome => "welcome",
             PaneKind::Git => "git",
+            PaneKind::Clock => "clock",
             PaneKind::System => "system",
             PaneKind::BuddyInsights => "buddy",
             #[cfg(feature = "online")]
@@ -135,6 +141,7 @@ impl PaneKind {
         match self {
             PaneKind::Welcome => false,
             PaneKind::Git => false,
+            PaneKind::Clock => false,
             PaneKind::System => false,
             PaneKind::BuddyInsights => false,
             #[cfg(feature = "online")]
@@ -151,6 +158,7 @@ impl PaneKind {
         match self {
             PaneKind::Welcome => Box::new(Welcome),
             PaneKind::Git => Box::new(git::GitPane::new()),
+            PaneKind::Clock => Box::new(clock::ClockPane::new()),
             PaneKind::System => Box::new(system::SystemPane::new()),
             PaneKind::BuddyInsights => Box::new(buddy_insights::BuddyPane::new()),
             #[cfg(feature = "online")]
