@@ -7,7 +7,7 @@
 
 use std::collections::VecDeque;
 
-use super::{coalesce, Input, ItemColors, MiniGame};
+use super::{coalesce, GameOptions, Input, ItemColors, MiniGame};
 use crate::doodle::{Character, Row};
 use crate::rng::Rng;
 use ratatui::style::Color;
@@ -51,17 +51,21 @@ pub struct Coil {
     rocks: Vec<(usize, usize)>,
     eaten: u32,
     score: u32,
+    /// Bites between fresh rocks (difficulty-tuned; fewer = harder).
+    rock_every: u32,
     over: bool,
+    opts: GameOptions,
     rng: Rng,
 }
 
 impl Coil {
-    pub fn new(character: Character, seed: u64) -> Coil {
+    pub fn new(character: Character, seed: u64, opts: GameOptions) -> Coil {
         let (cx, cy) = (GW / 2, GH / 2);
         let mut body = VecDeque::new();
         body.push_back((cx, cy));
         body.push_back((cx - 1, cy));
         body.push_back((cx - 2, cy));
+        let rock_every = (5 - opts.difficulty.notch()).max(3) as u32;
         let mut g = Coil {
             character,
             body,
@@ -73,7 +77,9 @@ impl Coil {
             rocks: Vec::new(),
             eaten: 0,
             score: 0,
+            rock_every,
             over: false,
+            opts,
             rng: Rng::new(seed),
         };
         // Seed the first food off the RNG we just built.
@@ -143,7 +149,7 @@ impl MiniGame for Coil {
 
     fn restart(&mut self) {
         let seed = self.rng.next_u64();
-        *self = Coil::new(self.character, seed);
+        *self = Coil::new(self.character, seed, self.opts);
     }
 
     fn score(&self) -> u32 {
@@ -210,8 +216,9 @@ impl MiniGame for Coil {
             self.score += 10 + level * 2;
             self.eaten += 1;
             self.grow_owed += 2;
-            // Every fifth bite hardens the arena with a fresh rock.
-            if self.eaten.is_multiple_of(5) {
+            // Every few bites hardens the arena with a fresh rock (difficulty
+            // sets how often).
+            if self.eaten.is_multiple_of(self.rock_every) {
                 self.add_rock();
             }
             // Sometimes a timed gem appears alongside the next food.
@@ -269,6 +276,10 @@ impl MiniGame for Coil {
 mod tests {
     use super::*;
 
+    fn opts() -> GameOptions {
+        GameOptions::default()
+    }
+
     fn colors() -> ItemColors {
         ItemColors {
             good: Color::Reset,
@@ -279,7 +290,7 @@ mod tests {
 
     #[test]
     fn eating_food_grows_and_scores() {
-        let mut g = Coil::new(Character::Blob, 1);
+        let mut g = Coil::new(Character::Blob, 1, opts());
         let (hx, hy) = g.head();
         // Put food directly ahead (moving right).
         g.food = (hx + 1, hy);
@@ -293,7 +304,7 @@ mod tests {
 
     #[test]
     fn hitting_a_wall_ends_it() {
-        let mut g = Coil::new(Character::Fox, 2);
+        let mut g = Coil::new(Character::Fox, 2, opts());
         // Drive straight into the right wall.
         for _ in 0..GW {
             g.step();
@@ -306,7 +317,7 @@ mod tests {
 
     #[test]
     fn cannot_reverse_into_neck() {
-        let mut g = Coil::new(Character::Cat, 3);
+        let mut g = Coil::new(Character::Cat, 3, opts());
         // Facing right; trying to go left must be ignored.
         g.input(Input::Left);
         g.step();
@@ -315,7 +326,7 @@ mod tests {
 
     #[test]
     fn hitting_a_rock_ends_it() {
-        let mut g = Coil::new(Character::Robot, 4);
+        let mut g = Coil::new(Character::Robot, 4, opts());
         let (hx, hy) = g.head();
         g.rocks = vec![(hx + 1, hy)];
         g.food = (0, 0); // keep food out of the way
@@ -325,7 +336,7 @@ mod tests {
 
     #[test]
     fn render_has_stable_dimensions() {
-        let g = Coil::new(Character::Ghost, 5);
+        let g = Coil::new(Character::Ghost, 5, opts());
         let rows = g.render(colors());
         assert_eq!(rows.len(), GH);
         for row in rows {
@@ -336,7 +347,7 @@ mod tests {
 
     #[test]
     fn many_steps_never_panic() {
-        let mut g = Coil::new(Character::Dragon, 0xC01D);
+        let mut g = Coil::new(Character::Dragon, 0xC01D, opts());
         let turns = [Input::Up, Input::Right, Input::Down, Input::Left];
         for i in 0..5000 {
             g.input(turns[(i / 3) % 4]);

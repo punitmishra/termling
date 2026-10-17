@@ -6,7 +6,7 @@
 //! One `step()` = one ball move (one cell on each axis), reflecting off the side
 //! walls, the ceiling, the bricks, and your paddle.
 
-use super::{coalesce, Input, ItemColors, MiniGame};
+use super::{coalesce, GameOptions, Input, ItemColors, MiniGame};
 use crate::doodle::{Character, Row};
 use crate::rng::Rng;
 use ratatui::style::Color;
@@ -23,6 +23,7 @@ const START_LIVES: u32 = 3;
 pub struct Bounce {
     character: Character,
     px: usize,            // paddle left edge
+    pw: usize,            // paddle width (difficulty-tuned)
     bx: i32,              // ball column
     by: i32,              // ball row
     vx: i32,              // ±1
@@ -32,26 +33,32 @@ pub struct Bounce {
     lives: u32,
     boards: u32,
     over: bool,
+    opts: GameOptions,
     rng: Rng,
 }
 
 impl Bounce {
-    pub fn new(character: Character, seed: u64) -> Bounce {
+    pub fn new(character: Character, seed: u64, opts: GameOptions) -> Bounce {
         let mut rng = Rng::new(seed);
         let bricks = Bounce::build_wall(&mut rng);
-        let px = (GW - PADDLE_W) / 2;
+        // A wider paddle is easier to keep the ball on; a narrower one harder.
+        let pw = (PADDLE_W as i32 - opts.difficulty.notch()).max(3) as usize;
+        let lives = (START_LIVES as i32 + opts.difficulty.life_bonus()).max(1) as u32;
+        let px = (GW - pw) / 2;
         Bounce {
             character,
             px,
+            pw,
             bx: (GW / 2) as i32,
             by: (PADDLE_ROW - 1) as i32,
             vx: 1,
             vy: -1,
             bricks,
             score: 0,
-            lives: START_LIVES,
+            lives,
             boards: 0,
             over: false,
+            opts,
             rng,
         }
     }
@@ -68,7 +75,7 @@ impl Bounce {
     }
 
     fn paddle_hit(&self, col: i32) -> bool {
-        col >= self.px as i32 && col < (self.px + PADDLE_W) as i32
+        col >= self.px as i32 && col < (self.px + self.pw) as i32
     }
 
     /// Knock out a brick at the ball's cell if one is there; return whether it hit.
@@ -96,7 +103,7 @@ impl Bounce {
     }
 
     fn reset_ball(&mut self) {
-        self.bx = (self.px + PADDLE_W / 2) as i32;
+        self.bx = (self.px + self.pw / 2) as i32;
         self.by = (PADDLE_ROW - 1) as i32;
         self.vx = if self.rng.chance(1, 2) { 1 } else { -1 };
         self.vy = -1;
@@ -113,14 +120,14 @@ impl MiniGame for Bounce {
     fn input(&mut self, i: Input) {
         match i {
             Input::Left if self.px > 0 => self.px -= 1,
-            Input::Right if self.px + PADDLE_W < GW => self.px += 1,
+            Input::Right if self.px + self.pw < GW => self.px += 1,
             _ => {}
         }
     }
 
     fn restart(&mut self) {
         let seed = self.rng.next_u64();
-        *self = Bounce::new(self.character, seed);
+        *self = Bounce::new(self.character, seed, self.opts);
     }
 
     fn score(&self) -> u32 {
@@ -178,7 +185,7 @@ impl MiniGame for Bounce {
                 self.vy = -1;
                 self.by = (PADDLE_ROW - 1) as i32;
                 // Steer off the paddle: left half sends it left, right half right.
-                let half = self.px as i32 + (PADDLE_W as i32) / 2;
+                let half = self.px as i32 + (self.pw as i32) / 2;
                 self.vx = if self.bx < half { -1 } else { 1 };
             } else {
                 self.lives = self.lives.saturating_sub(1);
@@ -210,7 +217,7 @@ impl MiniGame for Bounce {
 
         // Paddle.
         let paddle = ('▔', self.character.body_color());
-        for cell in cells[PADDLE_ROW].iter_mut().skip(self.px).take(PADDLE_W) {
+        for cell in cells[PADDLE_ROW].iter_mut().skip(self.px).take(self.pw) {
             *cell = paddle;
         }
 
@@ -227,6 +234,10 @@ impl MiniGame for Bounce {
 mod tests {
     use super::*;
 
+    fn opts() -> GameOptions {
+        GameOptions::default()
+    }
+
     fn colors() -> ItemColors {
         ItemColors {
             good: Color::Reset,
@@ -237,7 +248,7 @@ mod tests {
 
     #[test]
     fn clearing_a_brick_scores_and_bounces() {
-        let mut g = Bounce::new(Character::Blob, 1);
+        let mut g = Bounce::new(Character::Blob, 1, opts());
         // Aim the ball to rise into a known brick cell.
         g.bricks = vec![vec![0u8; GW]; BRICK_ROWS];
         g.bricks[0][5] = 1; // maps to grid row BRICK_TOP, col 5
@@ -254,7 +265,7 @@ mod tests {
 
     #[test]
     fn the_paddle_bounces_the_ball() {
-        let mut g = Bounce::new(Character::Cat, 2);
+        let mut g = Bounce::new(Character::Cat, 2, opts());
         g.bricks = vec![vec![1u8; GW]; BRICK_ROWS]; // keep the board unfinished
         g.px = 8;
         g.bx = 10; // over the paddle
@@ -268,7 +279,7 @@ mod tests {
 
     #[test]
     fn missing_the_ball_costs_a_life() {
-        let mut g = Bounce::new(Character::Fox, 3);
+        let mut g = Bounce::new(Character::Fox, 3, opts());
         g.bricks = vec![vec![1u8; GW]; BRICK_ROWS];
         g.px = 0; // paddle far to the left
         g.bx = GW as i32 - 1; // ball drops on the far right
@@ -281,7 +292,7 @@ mod tests {
 
     #[test]
     fn paddle_stays_in_bounds() {
-        let mut g = Bounce::new(Character::Ghost, 4);
+        let mut g = Bounce::new(Character::Ghost, 4, opts());
         for _ in 0..GW * 2 {
             g.input(Input::Left);
         }
@@ -294,7 +305,7 @@ mod tests {
 
     #[test]
     fn render_has_stable_dimensions() {
-        let g = Bounce::new(Character::Robot, 5);
+        let g = Bounce::new(Character::Robot, 5, opts());
         let rows = g.render(colors());
         assert_eq!(rows.len(), GH);
         for row in rows {
@@ -305,7 +316,7 @@ mod tests {
 
     #[test]
     fn many_steps_never_panic() {
-        let mut g = Bounce::new(Character::Jellyfish, 0x9EE7);
+        let mut g = Bounce::new(Character::Jellyfish, 0x9EE7, opts());
         for i in 0..5000 {
             if i % 3 == 0 {
                 g.input(Input::Left);

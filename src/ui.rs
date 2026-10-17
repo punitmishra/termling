@@ -3,7 +3,7 @@
 //! pane — termling never draws a shell of its own.)
 
 use ratatui::{
-    layout::{Alignment, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
@@ -14,6 +14,7 @@ use crate::app::{App, Flair, Mode};
 use crate::buddy::{Quip, Tone};
 use crate::doodle;
 use crate::games::{GameKind, ItemColors};
+use crate::panes::{Dashboard, Layout as PaneLayout, PaneKind};
 
 pub fn draw(f: &mut Frame, app: &App) {
     let area = f.area();
@@ -21,7 +22,203 @@ pub fn draw(f: &mut Frame, app: &App) {
         Mode::Ambient => draw_doodle(f, app, area),
         Mode::Menu => draw_menu(f, app, area),
         Mode::Game => draw_game(f, app, area),
+        Mode::Dashboard => draw_dashboard(f, app, area),
     }
+}
+
+/// The info dashboard, laid out like a terminal split: the buddy stays visible in
+/// a compact strip on top, and the dashboard proper sits *under* it — a narrow
+/// sidebar of pane names on the left, the content area tiled per the current
+/// [`PaneLayout`] (`s` cycles: focused → grid → columns → rows) on the right.
+fn draw_dashboard(f: &mut Frame, app: &App, area: Rect) {
+    // Reserve a top band for the creature so it never fully disappears behind the
+    // dashboard; the rest is the dashboard body.
+    let split = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(10), Constraint::Min(0)])
+        .split(area);
+    draw_creature_strip(f, app, split[0]);
+
+    let theme = app.theme();
+    let dash = app.dashboard();
+
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(16), Constraint::Min(0)])
+        .split(split[1]);
+    draw_sidebar(f, dash, cols[0], &theme);
+
+    let content = cols[1];
+    let layout = dash.layout();
+    let cells = content_cells(layout, content);
+    // Window the panes onto the page that contains the selection, so the whole
+    // set (including the online panes further down) is reachable in every layout.
+    let n = cells.len().max(1);
+    let start = window_start(dash.sel(), n);
+    for ((i, (kind, pane)), cell) in dash.all().enumerate().skip(start).take(n).zip(cells) {
+        draw_pane(f, kind, pane, cell, &theme, i == dash.sel());
+    }
+}
+
+/// The index the current page starts at: the page of `cells` panes that contains
+/// `sel`. Anchoring on the selection keeps the highlighted pane (including online
+/// panes further down the list) on screen in every multi-pane layout.
+fn window_start(sel: usize, cells: usize) -> usize {
+    let n = cells.max(1);
+    (sel / n) * n
+}
+
+/// The compact creature band shown atop the dashboard: the current character in
+/// its mood, plus a one-line level/XP/streak HUD — a smaller cousin of the full
+/// ambient view, so the buddy stays in view while you browse panes.
+fn draw_creature_strip(f: &mut Frame, app: &App, area: Rect) {
+    let theme = app.theme();
+    let mood = app.mood();
+    let character = app.current_character();
+    let d = doodle::render(mood, character, app.frame);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" {} · {} ", d.name, mood.label()))
+        .border_style(Style::default().fg(d.border_color));
+
+    let mut lines: Vec<Line> = Vec::new();
+    for row in &d.rows {
+        let spans: Vec<Span> = row
+            .iter()
+            .map(|s| Span::styled(s.text.clone(), Style::default().fg(s.color)))
+            .collect();
+        lines.push(Line::from(spans));
+    }
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("lv {}  ", app.level()),
+            Style::default().fg(theme.accent),
+        ),
+        xp_bar(app.level_progress(), 8, theme.bar),
+        Span::styled(
+            format!("  {}xp · streak {}", app.xp(), app.streak()),
+            Style::default().fg(theme.dim),
+        ),
+    ]));
+
+    f.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .alignment(Alignment::Center),
+        area,
+    );
+}
+
+/// Split the content area into the tiles for a layout: one cell (focused), a 2×2
+/// grid, N side-by-side columns, or N stacked rows.
+fn content_cells(layout: PaneLayout, content: Rect) -> Vec<Rect> {
+    let even = |n: usize| vec![Constraint::Ratio(1, n as u32); n];
+    match layout {
+        PaneLayout::Focused => vec![content],
+        PaneLayout::Grid => Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(content)
+            .iter()
+            .flat_map(|r| {
+                Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .split(*r)
+                    .to_vec()
+            })
+            .collect(),
+        PaneLayout::Columns => Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(even(layout.cells()))
+            .split(content)
+            .to_vec(),
+        PaneLayout::Rows => Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(even(layout.cells()))
+            .split(content)
+            .to_vec(),
+    }
+}
+
+/// The dashboard's left sidebar: one line per pane, the selected one highlighted,
+/// online panes flagged so it's obvious which need `TERMLING_ONLINE=1`.
+fn draw_sidebar(f: &mut Frame, dash: &Dashboard, area: Rect, theme: &crate::theme::Theme) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" panes ")
+        .border_style(Style::default().fg(theme.accent));
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, kind) in dash.kinds().iter().enumerate() {
+        let selected = i == dash.sel();
+        let marker = if selected { "▸ " } else { "  " };
+        let suffix = if kind.online() { " ·" } else { "" };
+        let style = if selected {
+            Style::default().fg(theme.bar).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.accent)
+        };
+        lines.push(Line::styled(
+            format!("{marker}{}{suffix}", kind.name()),
+            style,
+        ));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        format!("s {}", dash.layout().label()),
+        Style::default().fg(theme.dim),
+    ));
+    lines.push(Line::styled("r refresh", Style::default().fg(theme.dim)));
+    lines.push(Line::styled("esc back", Style::default().fg(theme.dim)));
+
+    f.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// Render one pane into `area`: a bordered, titled box filled with the pane's own
+/// colored rows (shared `Row`/`Seg` vocabulary), clipped to the tile.
+fn draw_pane(
+    f: &mut Frame,
+    _kind: PaneKind,
+    pane: &dyn crate::panes::Pane,
+    area: Rect,
+    theme: &crate::theme::Theme,
+    selected: bool,
+) {
+    // The selected tile gets the bar color + a ▸ marker so it stands out in the
+    // grid; the rest keep the quiet accent border.
+    let (border, title) = if selected {
+        (
+            Style::default().fg(theme.bar).add_modifier(Modifier::BOLD),
+            format!(" ▸ {} ", pane.title()),
+        )
+    } else {
+        (
+            Style::default().fg(theme.accent),
+            format!(" {} ", pane.title()),
+        )
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(border);
+    let inner = block.inner(area);
+
+    let rows = pane.render(inner.width, inner.height, theme);
+    let lines: Vec<Line> = rows
+        .iter()
+        .take(inner.height as usize)
+        .map(|row| {
+            let spans: Vec<Span> = row
+                .iter()
+                .map(|s| Span::styled(s.text.clone(), Style::default().fg(s.color)))
+                .collect();
+            Line::from(spans)
+        })
+        .collect();
+
+    f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn draw_doodle(f: &mut Frame, app: &App, area: Rect) {
@@ -338,7 +535,8 @@ fn draw_menu(f: &mut Frame, app: &App, area: Rect) {
     // each with a blank spacer. Everything else is the windowed game list, at
     // two rows per entry (name + tagline).
     const HEADER: usize = 2;
-    const FOOTER: usize = 2;
+    // Count line + options line + controls line.
+    const FOOTER: usize = 3;
     const PER_ENTRY: usize = 2;
     let list_rows = inner_h.saturating_sub(HEADER + FOOTER);
     let fit = (list_rows / PER_ENTRY).max(1);
@@ -378,8 +576,18 @@ fn draw_menu(f: &mut Frame, app: &App, area: Rect) {
         },
         Style::default().fg(theme.dim),
     ));
+    // The currently-selected options, so the player sees what they'll launch.
+    let opts = app.game_options();
     lines.push(Line::styled(
-        "↑↓ pick  ·  enter play  ·  esc back",
+        format!(
+            "difficulty {}  ·  speed {}",
+            opts.difficulty.label(),
+            opts.speed.label()
+        ),
+        Style::default().fg(theme.bar),
+    ));
+    lines.push(Line::styled(
+        "↑↓ pick  ·  d difficulty  ·  s speed  ·  enter play  ·  esc back",
         Style::default().fg(theme.dim),
     ));
 
@@ -490,6 +698,21 @@ mod tests {
         assert_eq!(display_width("かな"), 4);
         // A realistic quip: adding a 2-cell emoji adds exactly 2.
         assert_eq!(display_width("`docker` 👀"), display_width("`docker` ") + 2);
+    }
+
+    #[test]
+    fn window_anchors_on_selection() {
+        // 4-cell grid: the first page covers 0..4.
+        assert_eq!(window_start(0, 4), 0);
+        assert_eq!(window_start(3, 4), 0);
+        // Selecting a later pane (e.g. an online pane at index 5) pages forward
+        // and still includes the selection in the window.
+        let start = window_start(5, 4);
+        assert_eq!(start, 4);
+        assert!((start..start + 4).contains(&5));
+        // A 3-cell layout (columns/rows) pages in threes.
+        assert_eq!(window_start(7, 3), 6);
+        assert!((window_start(7, 3)..window_start(7, 3) + 3).contains(&7));
     }
 
     #[test]

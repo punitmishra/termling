@@ -5,7 +5,7 @@
 //!
 //! One `step()` = one column of scroll.
 
-use super::{coalesce, Input, ItemColors, MiniGame, SCENERY};
+use super::{coalesce, GameOptions, Input, ItemColors, MiniGame, SCENERY};
 use crate::doodle::{Character, Row};
 use crate::rng::Rng;
 use ratatui::style::Color;
@@ -34,11 +34,12 @@ pub struct Jump {
     spawn_timer: u32,
     score: u32,
     over: bool,
+    opts: GameOptions,
     rng: Rng,
 }
 
 impl Jump {
-    pub fn new(character: Character, seed: u64) -> Jump {
+    pub fn new(character: Character, seed: u64, opts: GameOptions) -> Jump {
         Jump {
             character,
             air: 0,
@@ -46,6 +47,7 @@ impl Jump {
             spawn_timer: 8,
             score: 0,
             over: false,
+            opts,
             rng: Rng::new(seed),
         }
     }
@@ -72,7 +74,10 @@ impl Jump {
         });
         // Space obstacles so a single hop can always recover; tighten with level.
         let gap = (13u32.saturating_sub(level)).max(JUMP_TICKS + 1);
-        self.spawn_timer = gap + self.rng.below(4) as u32;
+        // Difficulty trims the extra breathing room between obstacles (the gap
+        // floor stays recoverable, so Hard is tighter but never unfair).
+        let jitter = (4 - self.opts.difficulty.notch() * 2).max(1) as usize;
+        self.spawn_timer = gap + self.rng.below(jitter) as u32;
     }
 }
 
@@ -85,7 +90,7 @@ impl MiniGame for Jump {
 
     fn restart(&mut self) {
         let seed = self.rng.next_u64();
-        *self = Jump::new(self.character, seed);
+        *self = Jump::new(self.character, seed, self.opts);
     }
 
     fn score(&self) -> u32 {
@@ -172,6 +177,10 @@ impl MiniGame for Jump {
 mod tests {
     use super::*;
 
+    fn opts() -> GameOptions {
+        GameOptions::default()
+    }
+
     fn colors() -> ItemColors {
         ItemColors {
             good: Color::Reset,
@@ -182,7 +191,7 @@ mod tests {
 
     #[test]
     fn running_into_a_cactus_ends_it() {
-        let mut g = Jump::new(Character::Blob, 1);
+        let mut g = Jump::new(Character::Blob, 1, opts());
         g.obstacles = vec![Obstacle {
             x: PLAYER_COL as i32 + 1,
             cleared: false,
@@ -194,7 +203,7 @@ mod tests {
 
     #[test]
     fn jumping_clears_a_cactus_for_a_bonus() {
-        let mut g = Jump::new(Character::Fox, 2);
+        let mut g = Jump::new(Character::Fox, 2, opts());
         g.obstacles = vec![Obstacle {
             x: PLAYER_COL as i32 + 1,
             cleared: false,
@@ -209,7 +218,7 @@ mod tests {
 
     #[test]
     fn a_hop_returns_to_the_ground() {
-        let mut g = Jump::new(Character::Cat, 3);
+        let mut g = Jump::new(Character::Cat, 3, opts());
         g.jump();
         assert!(g.height() > 0);
         g.spawn_timer = 999;
@@ -221,7 +230,7 @@ mod tests {
 
     #[test]
     fn render_has_stable_dimensions() {
-        let g = Jump::new(Character::Robot, 4);
+        let g = Jump::new(Character::Robot, 4, opts());
         let rows = g.render(colors());
         assert_eq!(rows.len(), GH);
         for row in rows {
@@ -232,7 +241,7 @@ mod tests {
 
     #[test]
     fn many_steps_never_panic() {
-        let mut g = Jump::new(Character::Dragon, 0x0FF);
+        let mut g = Jump::new(Character::Dragon, 0x0FF, opts());
         for i in 0..5000 {
             if i % 9 == 0 {
                 g.jump();

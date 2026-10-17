@@ -6,7 +6,7 @@
 //!
 //! One `step()` = one tick: moles age, and now and then a new one pops.
 
-use super::{coalesce, Input, ItemColors, MiniGame, SCENERY};
+use super::{coalesce, GameOptions, Input, ItemColors, MiniGame, SCENERY};
 use crate::doodle::{Character, Row};
 use crate::rng::Rng;
 use ratatui::style::Color;
@@ -44,22 +44,25 @@ pub struct LaneWhack {
     hits: u32,
     spawn_timer: u32,
     over: bool,
+    opts: GameOptions,
     rng: Rng,
 }
 
 impl LaneWhack {
-    pub fn new(character: Character, seed: u64) -> LaneWhack {
+    pub fn new(character: Character, seed: u64, opts: GameOptions) -> LaneWhack {
+        let lives = (START_LIVES as i32 + opts.difficulty.life_bonus()).max(1) as u32;
         LaneWhack {
             character,
             lanes: std::array::from_fn(|_| None),
             cursor: 2,
             score: 0,
-            lives: START_LIVES,
+            lives,
             combo: 0,
             best_combo: 0,
             hits: 0,
             spawn_timer: 2,
             over: false,
+            opts,
             rng: Rng::new(seed),
         }
     }
@@ -112,7 +115,9 @@ impl LaneWhack {
             return;
         }
         let lane = empties[self.rng.below(empties.len())];
-        let bomb_pct = (20 + level * 4).min(50);
+        // Difficulty shifts how often a bomb pops instead of a scorable mole.
+        let bomb_pct = ((20 + level * 4).min(50) as i32 + self.opts.difficulty.notch() * 8)
+            .clamp(5, 70) as u32;
         let kind = if self.rng.chance(bomb_pct, 100) {
             Kind::Bomb
         } else if self.rng.chance(1, 7) {
@@ -147,7 +152,7 @@ impl MiniGame for LaneWhack {
 
     fn restart(&mut self) {
         let seed = self.rng.next_u64();
-        *self = LaneWhack::new(self.character, seed);
+        *self = LaneWhack::new(self.character, seed, self.opts);
     }
 
     fn score(&self) -> u32 {
@@ -248,6 +253,10 @@ impl MiniGame for LaneWhack {
 mod tests {
     use super::*;
 
+    fn opts() -> GameOptions {
+        GameOptions::default()
+    }
+
     fn colors() -> ItemColors {
         ItemColors {
             good: Color::Reset,
@@ -262,7 +271,7 @@ mod tests {
 
     #[test]
     fn whacking_a_good_mole_scores_and_builds_combo() {
-        let mut g = LaneWhack::new(Character::Blob, 1);
+        let mut g = LaneWhack::new(Character::Blob, 1, opts());
         g.cursor = 2;
         g.lanes[2] = Some(mole(Kind::Good, 20));
         g.input(Input::Action);
@@ -274,7 +283,7 @@ mod tests {
 
     #[test]
     fn whacking_a_bomb_costs_a_life() {
-        let mut g = LaneWhack::new(Character::Robot, 2);
+        let mut g = LaneWhack::new(Character::Robot, 2, opts());
         g.cursor = 0;
         g.lanes[0] = Some(mole(Kind::Bomb, 20));
         g.combo = 5;
@@ -285,7 +294,7 @@ mod tests {
 
     #[test]
     fn a_good_mole_timing_out_costs_a_life() {
-        let mut g = LaneWhack::new(Character::Cat, 3);
+        let mut g = LaneWhack::new(Character::Cat, 3, opts());
         g.lanes[1] = Some(mole(Kind::Good, 1));
         g.spawn_timer = 999;
         g.step();
@@ -295,7 +304,7 @@ mod tests {
 
     #[test]
     fn a_bomb_timing_out_is_safe() {
-        let mut g = LaneWhack::new(Character::Fox, 4);
+        let mut g = LaneWhack::new(Character::Fox, 4, opts());
         g.lanes[3] = Some(mole(Kind::Bomb, 1));
         g.spawn_timer = 999;
         g.step();
@@ -305,7 +314,7 @@ mod tests {
 
     #[test]
     fn cursor_stays_in_bounds() {
-        let mut g = LaneWhack::new(Character::Ghost, 5);
+        let mut g = LaneWhack::new(Character::Ghost, 5, opts());
         for _ in 0..10 {
             g.input(Input::Left);
         }
@@ -318,7 +327,7 @@ mod tests {
 
     #[test]
     fn render_has_stable_dimensions() {
-        let mut g = LaneWhack::new(Character::TubeBoy, 6);
+        let mut g = LaneWhack::new(Character::TubeBoy, 6, opts());
         g.lanes[0] = Some(mole(Kind::Good, 10));
         g.lanes[4] = Some(mole(Kind::Bomb, 10));
         let rows = g.render(colors());
@@ -331,7 +340,7 @@ mod tests {
 
     #[test]
     fn many_steps_never_panic() {
-        let mut g = LaneWhack::new(Character::Jellyfish, 0xBEEF);
+        let mut g = LaneWhack::new(Character::Jellyfish, 0xBEEF, opts());
         for i in 0..5000 {
             match i % 5 {
                 0 => g.input(Input::Left),

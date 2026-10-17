@@ -54,6 +54,98 @@ pub(crate) fn coalesce(cells: Vec<(char, Color)>) -> Row {
     row
 }
 
+/// How hard a game plays. Bakes into each game's spawn rates / obstacle density
+/// / starting lives — `Normal` reproduces the original, untuned behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Difficulty {
+    Easy,
+    #[default]
+    Normal,
+    Hard,
+}
+
+impl Difficulty {
+    /// Lower-case label for the picker.
+    pub fn label(self) -> &'static str {
+        match self {
+            Difficulty::Easy => "easy",
+            Difficulty::Normal => "normal",
+            Difficulty::Hard => "hard",
+        }
+    }
+
+    /// Cycle to the next difficulty (wraps Hard → Easy).
+    pub fn next(self) -> Difficulty {
+        match self {
+            Difficulty::Easy => Difficulty::Normal,
+            Difficulty::Normal => Difficulty::Hard,
+            Difficulty::Hard => Difficulty::Easy,
+        }
+    }
+
+    /// A signed step for scaling a game's knobs: `-1` easier, `0` normal,
+    /// `+1` harder. Games add this to spawn gaps, densities, and the like.
+    pub fn notch(self) -> i32 {
+        match self {
+            Difficulty::Easy => -1,
+            Difficulty::Normal => 0,
+            Difficulty::Hard => 1,
+        }
+    }
+
+    /// Starting-life adjustment vs. a game's base count (Easy +1, Hard −1).
+    pub fn life_bonus(self) -> i32 {
+        -self.notch()
+    }
+}
+
+/// How fast the world ticks. Scales `App::step_interval` on top of each game's
+/// own per-level speed curve — `Normal` leaves that curve untouched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Speed {
+    Calm,
+    #[default]
+    Normal,
+    Fast,
+}
+
+impl Speed {
+    /// Lower-case label for the picker.
+    pub fn label(self) -> &'static str {
+        match self {
+            Speed::Calm => "calm",
+            Speed::Normal => "normal",
+            Speed::Fast => "fast",
+        }
+    }
+
+    /// Cycle to the next speed (wraps Fast → Calm).
+    pub fn next(self) -> Speed {
+        match self {
+            Speed::Calm => Speed::Normal,
+            Speed::Normal => Speed::Fast,
+            Speed::Fast => Speed::Calm,
+        }
+    }
+
+    /// Scale a tick interval in milliseconds: Calm stretches it (slower),
+    /// Fast shortens it (quicker), Normal leaves it be.
+    pub fn scale(self, ms: u64) -> u64 {
+        match self {
+            Speed::Calm => ms * 7 / 5,
+            Speed::Normal => ms,
+            Speed::Fast => ms * 7 / 10,
+        }
+    }
+}
+
+/// The player-chosen options a game is built with: how hard and how fast.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct GameOptions {
+    pub difficulty: Difficulty,
+    pub speed: Speed,
+}
+
 /// The three item colors a game paints with, supplied by the active theme.
 #[derive(Clone, Copy)]
 pub struct ItemColors {
@@ -152,17 +244,51 @@ impl GameKind {
         }
     }
 
-    /// Build a fresh instance for the given character.
-    pub fn make(self, character: Character, seed: u64) -> Box<dyn MiniGame> {
+    /// Build a fresh instance for the given character, tuned by `opts`.
+    pub fn make(self, character: Character, seed: u64, opts: GameOptions) -> Box<dyn MiniGame> {
         match self {
-            GameKind::Drop => Box::new(DoodleDrop::new(character, seed)),
-            GameKind::GapDive => Box::new(GapDive::new(character, seed)),
-            GameKind::Coil => Box::new(Coil::new(character, seed)),
-            GameKind::Whack => Box::new(LaneWhack::new(character, seed)),
-            GameKind::Jump => Box::new(Jump::new(character, seed)),
-            GameKind::Blast => Box::new(Blast::new(character, seed)),
-            GameKind::Muncher => Box::new(Muncher::new(character, seed)),
-            GameKind::Bounce => Box::new(Bounce::new(character, seed)),
+            GameKind::Drop => Box::new(DoodleDrop::new(character, seed, opts)),
+            GameKind::GapDive => Box::new(GapDive::new(character, seed, opts)),
+            GameKind::Coil => Box::new(Coil::new(character, seed, opts)),
+            GameKind::Whack => Box::new(LaneWhack::new(character, seed, opts)),
+            GameKind::Jump => Box::new(Jump::new(character, seed, opts)),
+            GameKind::Blast => Box::new(Blast::new(character, seed, opts)),
+            GameKind::Muncher => Box::new(Muncher::new(character, seed, opts)),
+            GameKind::Bounce => Box::new(Bounce::new(character, seed, opts)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn difficulty_cycles_and_defaults_to_normal() {
+        assert_eq!(Difficulty::default(), Difficulty::Normal);
+        assert_eq!(Difficulty::Easy.next(), Difficulty::Normal);
+        assert_eq!(Difficulty::Normal.next(), Difficulty::Hard);
+        assert_eq!(Difficulty::Hard.next(), Difficulty::Easy);
+        // The notch and life bonus move in opposite directions.
+        assert_eq!(Difficulty::Easy.notch(), -1);
+        assert_eq!(Difficulty::Hard.life_bonus(), -1);
+    }
+
+    #[test]
+    fn speed_cycles_and_scales_the_tick() {
+        assert_eq!(Speed::default(), Speed::Normal);
+        assert_eq!(Speed::Calm.next(), Speed::Normal);
+        assert_eq!(Speed::Fast.next(), Speed::Calm);
+        // Normal is a no-op; Calm slows the tick, Fast quickens it.
+        assert_eq!(Speed::Normal.scale(100), 100);
+        assert!(Speed::Calm.scale(100) > 100);
+        assert!(Speed::Fast.scale(100) < 100);
+    }
+
+    #[test]
+    fn game_options_defaults_to_normal_normal() {
+        let o = GameOptions::default();
+        assert_eq!(o.difficulty, Difficulty::Normal);
+        assert_eq!(o.speed, Speed::Normal);
     }
 }

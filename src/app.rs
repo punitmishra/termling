@@ -11,8 +11,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::buddy::{Buddy, Quip};
 use crate::doodle::Character;
 use crate::event::{Event, Kind};
-use crate::games::{GameKind, Input, MiniGame};
+use crate::games::{GameKind, GameOptions, Input, MiniGame};
 use crate::mood::{Mood, Signals};
+use crate::net::Net;
+use crate::panes::Dashboard;
 use crate::theme::{self, Theme};
 
 /// What the companion is showing: the ambient creature, the arcade picker, or a
@@ -26,6 +28,8 @@ pub enum Mode {
     Menu,
     /// A game in progress.
     Game,
+    /// The info dashboard: a sidebar of panes (local, and online when enabled).
+    Dashboard,
 }
 
 /// A brief celebratory flourish overlaid on the ambient creature, then it fades.
@@ -79,6 +83,8 @@ pub struct App {
     game: Option<Box<dyn MiniGame>>,
     /// Highlighted entry in the game picker.
     menu_sel: usize,
+    /// Difficulty + speed the next game is built with (chosen in the picker).
+    options: GameOptions,
 
     // --- look & feel ---
     theme: usize,
@@ -120,6 +126,13 @@ pub struct App {
     buddy: Buddy,
     /// The current speech-bubble line and how many frames it has left.
     speech: Option<(Quip, u32)>,
+
+    // --- the info dashboard ---
+    /// The sidebar of info panes (local always; online when enabled).
+    dashboard: Dashboard,
+    /// The background fetch worker — `Some` only in online mode, so a default
+    /// build never spawns a thread or touches the network.
+    net: Option<Net>,
 }
 
 /// How many recent commands the ambient feed remembers.
@@ -134,6 +147,7 @@ impl App {
             mode: Mode::Ambient,
             game: None,
             menu_sel: 0,
+            options: GameOptions::default(),
             theme: 0,
             xp,
             best_streak,
@@ -151,6 +165,9 @@ impl App {
             flair: None,
             buddy: Buddy::load(),
             speech: None,
+            dashboard: Dashboard::new(),
+            // Spawn the fetch worker only when online mode is actually on.
+            net: crate::net::online_enabled().then(Net::spawn),
         }
     }
 
@@ -405,6 +422,67 @@ impl App {
         self.game.as_deref()
     }
 
+    // -- the info dashboard --
+
+    /// Open the dashboard (sidebar of info panes).
+    pub fn open_dashboard(&mut self) {
+        self.mode = Mode::Dashboard;
+        self.idle_ticks = 0;
+    }
+
+    /// Leave the dashboard, back to the ambient creature.
+    pub fn exit_dashboard(&mut self) {
+        self.mode = Mode::Ambient;
+        self.idle_ticks = 0;
+    }
+
+    /// The dashboard state, for the UI to render.
+    pub fn dashboard(&self) -> &Dashboard {
+        &self.dashboard
+    }
+
+    pub fn dashboard_prev(&mut self) {
+        self.dashboard.prev();
+    }
+
+    pub fn dashboard_next(&mut self) {
+        self.dashboard.next();
+    }
+
+    pub fn dashboard_cycle_layout(&mut self) {
+        self.dashboard.cycle_layout();
+    }
+
+    /// Force every pane to recollect / re-fetch. Works offline too: local panes
+    /// are reset unconditionally, and online fetches are pumped only when a net
+    /// worker exists.
+    pub fn dashboard_refresh(&mut self) {
+        self.dashboard.refresh_all();
+        if let Some(net) = &self.net {
+            for spec in self.dashboard.poll_fetches() {
+                net.request(spec);
+            }
+        }
+    }
+
+    /// Fold any completed network fetches back into their panes. No-op offline.
+    pub fn drain_net(&mut self) {
+        if let Some(net) = &self.net {
+            for result in net.try_drain() {
+                self.dashboard.on_data(&result);
+            }
+        }
+    }
+
+    /// Queue whatever the panes want fetched now (online mode only). No-op offline.
+    pub fn pump_fetches(&mut self) {
+        if let Some(net) = &self.net {
+            for spec in self.dashboard.poll_fetches() {
+                net.request(spec);
+            }
+        }
+    }
+
     // -- the game picker --
 
     /// Open the arcade menu.
@@ -425,10 +503,25 @@ impl App {
         self.menu_sel = (self.menu_sel + 1) % GameKind::ALL.len();
     }
 
-    /// Start the highlighted game.
+    /// The difficulty + speed the picker will launch the next game with.
+    pub fn game_options(&self) -> GameOptions {
+        self.options
+    }
+
+    /// Cycle the selected difficulty (Easy → Normal → Hard → …).
+    pub fn cycle_difficulty(&mut self) {
+        self.options.difficulty = self.options.difficulty.next();
+    }
+
+    /// Cycle the selected speed (Calm → Normal → Fast → …).
+    pub fn cycle_speed(&mut self) {
+        self.options.speed = self.options.speed.next();
+    }
+
+    /// Start the highlighted game with the chosen options.
     pub fn menu_select(&mut self) {
         let kind = GameKind::ALL[self.menu_sel];
-        self.game = Some(kind.make(self.current_character(), seed()));
+        self.game = Some(kind.make(self.current_character(), seed(), self.options));
         self.mode = Mode::Game;
     }
 
@@ -468,11 +561,14 @@ impl App {
     pub fn step_interval(&self) -> Duration {
         match (self.mode, &self.game) {
             (Mode::Game, Some(g)) if !g.is_over() => {
-                let ms = 150u64.saturating_sub((g.level() as u64 - 1) * 12).max(55);
-                Duration::from_millis(ms)
+                let ms = 150u64
+                    .saturating_sub(g.level().saturating_sub(1) as u64 * 12)
+                    .max(55);
+                // Fold in the chosen speed on top of the per-game level curve.
+                Duration::from_millis(self.options.speed.scale(ms))
             }
             (Mode::Game, _) => Duration::from_millis(150),
-            (Mode::Ambient | Mode::Menu, _) => Duration::from_millis(100),
+            (Mode::Ambient | Mode::Menu | Mode::Dashboard, _) => Duration::from_millis(100),
         }
     }
 
@@ -507,6 +603,11 @@ impl App {
                 let frame = self.frame;
                 self.roster
                     .retain(|s| s.running || frame.saturating_sub(s.last_seen) < STALE_TICKS);
+            }
+            Mode::Dashboard => {
+                self.idle_ticks = self.idle_ticks.saturating_add(1);
+                self.burst = self.burst.saturating_sub(1);
+                self.dashboard.tick(self.frame);
             }
         }
     }
