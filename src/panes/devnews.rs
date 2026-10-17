@@ -8,7 +8,7 @@
 
 use serde::Deserialize;
 
-use super::{line, Pane, PaneKind};
+use super::{clip, line, short, Pane, PaneKind};
 use crate::doodle::{Row, Seg};
 use crate::net::{self, FetchResult, FetchSpec};
 use crate::theme::Theme;
@@ -142,22 +142,6 @@ fn parse(body: &str) -> Result<Vec<Story>, String> {
             score: s.score,
         })
         .collect())
-}
-
-/// Clip a title to `max` columns (by char), adding an ellipsis when cut.
-fn clip(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        return s.to_string();
-    }
-    let take = max.saturating_sub(1).max(1);
-    let mut out: String = s.chars().take(take).collect();
-    out.push('…');
-    out
-}
-
-fn short(e: &str) -> String {
-    let first = e.trim().lines().next().unwrap_or("").trim();
-    first.chars().take(56).collect()
 }
 
 #[cfg(test)]

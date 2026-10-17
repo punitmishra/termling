@@ -14,7 +14,7 @@ use std::collections::VecDeque;
 
 use serde::Deserialize;
 
-use super::{line, Pane, PaneKind};
+use super::{clip, line, short, Pane, PaneKind};
 use crate::doodle::{Row, Seg};
 use crate::net::{self, FetchResult, FetchSpec};
 use crate::theme::Theme;
@@ -39,6 +39,9 @@ pub struct News {
     pending: bool,
     /// Item ids still to fetch this cycle.
     queue: VecDeque<u64>,
+    /// Headlines being gathered for the in-progress cycle; swapped into
+    /// `stories` only once the cycle completes, so a refresh never blanks.
+    staging: Vec<String>,
     /// Completed headlines, in arrival (rank) order.
     stories: Vec<String>,
     error: Option<String>,
@@ -53,6 +56,7 @@ impl News {
             have_top: false,
             pending: false,
             queue: VecDeque::new(),
+            staging: Vec::new(),
             stories: Vec::new(),
             error: None,
         }
@@ -122,12 +126,14 @@ impl Pane for News {
         // Shape-based routing: an array is the id list; an object is one item.
         if let Ok(ids) = serde_json::from_str::<Vec<u64>>(body) {
             self.have_top = true;
-            self.stories.clear();
+            // Gather the new set off to the side; the currently-shown `stories`
+            // stay on screen until this cycle finishes.
+            self.staging.clear();
             self.queue = ids.into_iter().take(WANT).collect();
             self.error = None;
         } else if let Ok(item) = serde_json::from_str::<HnItem>(body) {
             if let Some(title) = item.title {
-                self.stories.push(title);
+                self.staging.push(title);
             }
             self.error = None;
         } else if self.have_top {
@@ -137,6 +143,12 @@ impl Pane for News {
         } else {
             self.error = Some("bad response".into());
             self.cycle_active = false;
+        }
+        // The queue drains (in `poll_fetch`) as items are requested, so an empty
+        // queue after an item means the fresh set is complete — swap it in at
+        // once, replacing the old headlines in place with no "loading…" gap.
+        if self.have_top && self.queue.is_empty() && !self.staging.is_empty() {
+            self.stories = std::mem::take(&mut self.staging);
         }
     }
 
@@ -175,22 +187,6 @@ struct HnItem {
     title: Option<String>,
 }
 
-/// Clip a title to `max` columns (by char), adding an ellipsis when cut.
-fn clip(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        return s.to_string();
-    }
-    let take = max.saturating_sub(1).max(1);
-    let mut out: String = s.chars().take(take).collect();
-    out.push('…');
-    out
-}
-
-fn short(e: &str) -> String {
-    let first = e.trim().lines().next().unwrap_or("").trim();
-    first.chars().take(56).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,6 +219,14 @@ mod tests {
     #[test]
     fn item_payload_appends_a_headline() {
         let mut n = News::new();
+        // Drive a minimal cycle: a one-id top list, the dashboard dispatching
+        // that id (which drains the queue), then the item itself. Completing the
+        // cycle swaps the staged headline into view.
+        n.on_data(&FetchResult {
+            pane: PaneKind::News,
+            body: Ok("[38000]".into()),
+        });
+        n.queue.pop_front(); // poll_fetch would pop this id to request the item
         n.on_data(&FetchResult {
             pane: PaneKind::News,
             body: Ok(ITEM_SAMPLE.into()),
@@ -230,6 +234,43 @@ mod tests {
         let out = text(&n.render(40, 12, &THEMES[0]));
         assert!(out.contains("Show HN: A tiny terminal creature"), "{out}");
         assert!(out.contains("1. "), "ranked: {out}");
+    }
+
+    #[test]
+    fn refresh_keeps_old_headlines_until_new_set_is_ready() {
+        let mut n = News::new();
+        // First cycle lands one headline.
+        n.on_data(&FetchResult {
+            pane: PaneKind::News,
+            body: Ok("[1]".into()),
+        });
+        n.queue.pop_front();
+        n.on_data(&FetchResult {
+            pane: PaneKind::News,
+            body: Ok(r#"{"id":1,"title":"old story"}"#.into()),
+        });
+        assert_eq!(n.stories, vec!["old story".to_string()]);
+
+        // A refresh cycle begins: the new top list arrives, but the old headline
+        // must stay on screen (no blank "loading…") until the new one is ready.
+        n.on_data(&FetchResult {
+            pane: PaneKind::News,
+            body: Ok("[2]".into()),
+        });
+        let mid = text(&n.render(40, 12, &THEMES[0]));
+        assert!(
+            mid.contains("old story"),
+            "old headline dropped early: {mid}"
+        );
+        assert!(!mid.contains("loading"), "blanked on refresh: {mid}");
+
+        // The new item completes the cycle and swaps in place.
+        n.queue.pop_front();
+        n.on_data(&FetchResult {
+            pane: PaneKind::News,
+            body: Ok(r#"{"id":2,"title":"new story"}"#.into()),
+        });
+        assert_eq!(n.stories, vec!["new story".to_string()]);
     }
 
     #[test]
@@ -261,20 +302,21 @@ mod tests {
             body: Ok(TOP_SAMPLE.into()),
         });
         assert!(n.have_top);
-        let before = n.stories.len();
+        let before = n.staging.len();
         n.on_data(&FetchResult {
             pane: PaneKind::News,
             body: Ok("null".into()),
         });
-        // Skipped: no error, no phantom headline.
+        // Skipped: no error, no phantom headline staged.
         assert!(n.error.is_none(), "null should not raise an error");
-        assert_eq!(n.stories.len(), before);
-        // A good item after the null still appends normally.
+        assert_eq!(n.staging.len(), before);
+        // A good item after the null still stages normally (the cycle still has
+        // queued ids, so nothing has swapped into `stories` yet).
         n.on_data(&FetchResult {
             pane: PaneKind::News,
             body: Ok(ITEM_SAMPLE.into()),
         });
-        assert_eq!(n.stories.len(), before + 1);
+        assert_eq!(n.staging.len(), before + 1);
     }
 
     #[test]

@@ -14,7 +14,7 @@
 
 use serde::Deserialize;
 
-use super::{line, Pane, PaneKind};
+use super::{line, short, Pane, PaneKind};
 use crate::doodle::Row;
 use crate::net::{self, FetchResult, FetchSpec};
 use crate::theme::Theme;
@@ -203,13 +203,6 @@ fn nonempty<'a>(s: &'a str, fallback: &'a str) -> &'a str {
     } else {
         s
     }
-}
-
-/// Collapse a possibly-multi-line, possibly-long error into one short line fit
-/// for a narrow tile.
-fn short(e: &str) -> String {
-    let first = e.trim().lines().next().unwrap_or("").trim();
-    first.chars().take(56).collect()
 }
 
 /// WMO weather-interpretation code → short label.

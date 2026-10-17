@@ -219,6 +219,28 @@ pub fn line(text: impl Into<String>, color: Color) -> Row {
     }]
 }
 
+/// Collapse a possibly-multi-line, possibly-long error into one short line fit
+/// for a narrow tile: the first line, capped at 56 chars. Shared by the online
+/// panes' `on_data` error handling.
+#[cfg(feature = "online")]
+pub(crate) fn short(e: &str) -> String {
+    let first = e.trim().lines().next().unwrap_or("").trim();
+    first.chars().take(56).collect()
+}
+
+/// Clip a string to `max` columns (by char), adding an ellipsis when cut. Shared
+/// by the headline panes.
+#[cfg(feature = "online")]
+pub(crate) fn clip(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let take = max.saturating_sub(1).max(1);
+    let mut out: String = s.chars().take(take).collect();
+    out.push('…');
+    out
+}
+
 /// How the dashboard content area is tiled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Layout {

@@ -125,9 +125,13 @@ fn run(terminal: &mut Tui, mut app: App, mut receiver: Option<Receiver>) -> io::
 
         // Drain any completed network fetches (online mode only) the same way —
         // non-blocking, so the render loop never waits on the network — then let
-        // the dashboard queue whatever it wants fetched next.
-        app.drain_net();
-        app.pump_fetches();
+        // the dashboard queue whatever it wants fetched next. Only while the
+        // dashboard is on screen, so a build never fetches (or fires a billable
+        // AI request) before the user opens it.
+        if app.mode() == Mode::Dashboard {
+            app.drain_net();
+            app.pump_fetches();
+        }
 
         // Wait for input, but never past the next scheduled step, so the game
         // (and the doodle animation) advance on a steady cadence regardless of

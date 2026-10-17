@@ -43,12 +43,17 @@ pub struct SystemPane {
 }
 
 impl SystemPane {
-    /// Build with an initial reading so the tile is never blank on first paint.
+    /// Build the pane and kick off the first reading off-thread, so building it
+    /// (which `App::new` does eagerly for every pane) never blocks startup on
+    /// shelling out to `uptime`/`sysctl`/`vm_stat`. `info` stays empty until the
+    /// first result lands, so `render` shows "—" placeholders until then.
     pub fn new() -> SystemPane {
+        let bg = Bg::new();
+        bg.trigger(collect);
         SystemPane {
-            info: collect(),
+            info: SysInfo::default(),
             next_refresh: REFRESH_TICKS,
-            bg: Bg::new(),
+            bg,
         }
     }
 }

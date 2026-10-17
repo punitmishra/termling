@@ -10,7 +10,7 @@
 //! (Stooq's CSV endpoint used to serve this but now 404s, hence Yahoo + the
 //! default `User-Agent` the HTTP agent sends — Yahoo 429s requests without one.)
 
-use super::{line, Pane, PaneKind};
+use super::{line, short, Pane, PaneKind};
 use crate::doodle::{Row, Seg};
 use crate::net::{self, FetchSpec};
 use crate::theme::Theme;
@@ -34,7 +34,8 @@ pub struct Stocks {
     custom: bool,
     frame: u64,
     fetched_at: Option<u64>,
-    /// Symbols still to request this cycle (drained one per `poll_fetch`).
+    /// Symbols still to request this cycle, stored reversed so `pop()` yields the
+    /// watchlist's first symbol first (drained one per `poll_fetch`).
     queue: Vec<String>,
     /// True while a single request is in flight (one at a time).
     in_flight: bool,
@@ -93,9 +94,11 @@ impl Pane for Stocks {
         if !net::online_enabled() || self.in_flight {
             return None;
         }
-        // Start a new cycle when the data is due and we're not mid-cycle.
+        // Start a new cycle when the data is due and we're not mid-cycle. Build
+        // the queue reversed so `pop()` requests the watchlist in listed order,
+        // and quotes render in that order too (first-seen wins in `store`).
         if self.queue.is_empty() && self.due() {
-            self.queue = self.symbols.clone();
+            self.queue = self.symbols.iter().rev().cloned().collect();
             self.fetched_at = Some(self.frame);
         }
         let symbol = self.queue.pop()?;
@@ -214,11 +217,6 @@ fn parse_quote(body: &str) -> Result<Quote, String> {
     })
 }
 
-fn short(e: &str) -> String {
-    let first = e.trim().lines().next().unwrap_or("").trim();
-    first.chars().take(56).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,6 +225,9 @@ mod tests {
     // A trimmed-but-real-shaped v8 chart response.
     const SAMPLE_AAPL: &str = r#"{"chart":{"result":[{"meta":{"currency":"USD",
         "symbol":"AAPL","regularMarketPrice":185.64,"chartPreviousClose":187.15}}],
+        "error":null}}"#;
+    const SAMPLE_MSFT: &str = r#"{"chart":{"result":[{"meta":{"currency":"USD",
+        "symbol":"MSFT","regularMarketPrice":420.10,"chartPreviousClose":418.00}}],
         "error":null}}"#;
 
     fn text(rows: &[Row]) -> String {
@@ -264,6 +265,44 @@ mod tests {
         assert!(out.contains("AAPL"), "symbol: {out}");
         assert!(out.contains("185.64"), "price: {out}");
         assert!(out.contains("-1.51"), "change: {out}");
+    }
+
+    #[test]
+    fn quotes_render_in_watchlist_order() {
+        // The watchlist order must survive the fetch cycle: with "AAPL,MSFT",
+        // AAPL is requested first and renders above MSFT. (Regression: `pop()`
+        // used to drain the queue from the end, inverting the configured order.)
+        std::env::set_var("TERMLING_ONLINE", "1");
+        std::env::set_var("TERMLING_STOCKS", "AAPL,MSFT");
+        let mut s = Stocks::new();
+
+        // First poll requests AAPL (the first listed symbol), not MSFT.
+        let first = s.poll_fetch().expect("a first fetch");
+        assert!(first.url.contains("/AAPL?"), "first request: {}", first.url);
+        s.on_data(&crate::net::FetchResult {
+            pane: PaneKind::Stocks,
+            body: Ok(SAMPLE_AAPL.into()),
+        });
+
+        // Second poll requests MSFT.
+        let second = s.poll_fetch().expect("a second fetch");
+        assert!(
+            second.url.contains("/MSFT?"),
+            "second request: {}",
+            second.url
+        );
+        s.on_data(&crate::net::FetchResult {
+            pane: PaneKind::Stocks,
+            body: Ok(SAMPLE_MSFT.into()),
+        });
+
+        let out = text(&s.render(40, 12, &THEMES[0]));
+        let aapl = out.find("AAPL").expect("AAPL present");
+        let msft = out.find("MSFT").expect("MSFT present");
+        assert!(aapl < msft, "AAPL should render above MSFT:\n{out}");
+
+        std::env::remove_var("TERMLING_ONLINE");
+        std::env::remove_var("TERMLING_STOCKS");
     }
 
     #[test]

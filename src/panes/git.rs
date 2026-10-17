@@ -50,12 +50,17 @@ pub struct GitPane {
 }
 
 impl GitPane {
-    /// Build the pane with an initial snapshot so it's never blank on first paint.
+    /// Build the pane and kick off the first collection off-thread, so building
+    /// it (which `App::new` does eagerly for every pane) never blocks startup on
+    /// `git`. `info` stays empty until the first result lands, so `render` shows
+    /// its placeholder until then.
     pub fn new() -> GitPane {
+        let bg = Bg::new();
+        bg.trigger(collect);
         GitPane {
-            info: collect(),
+            info: GitInfo::default(),
             next_refresh: REFRESH_TICKS,
-            bg: Bg::new(),
+            bg,
         }
     }
 }
