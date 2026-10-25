@@ -12,8 +12,10 @@
 //! callbacks and preserves any prompt hook you already had, so your shell,
 //! prompt, and plugins keep working. Each callback shells out to `termling
 //! emit`, which fires a fire-and-forget datagram and returns instantly whether
-//! or not the sidebar is running. The socket/event machinery is shell-agnostic;
-//! the only per-shell part is the hook text below.
+//! or not the sidebar is running. That call is also **backgrounded/disowned** so
+//! the interactive prompt never waits on even the process spawn — the per-command
+//! cost stays off the prompt's critical path. The socket/event machinery is
+//! shell-agnostic; the only per-shell part is the hook text below.
 
 use std::io;
 use std::path::Path;
@@ -122,9 +124,11 @@ if [[ -z $TERMLING_COMPANION && ${TERMLING_AUTOSPAWN:-1} != 0 ]]; then
   ( "$_TERMLING_BIN" ensure & ) 2>/dev/null
 fi
 
+# The emit is fire-and-forget, so it's backgrounded (`&!` = background + disown,
+# no job-control chatter) — the prompt never waits on a process spawn.
 __termling_preexec() {
   _termling_start=$EPOCHREALTIME
-  "$_TERMLING_BIN" emit --type start --cmd "$1" --pwd "$PWD" --shell "$_termling_shell"
+  "$_TERMLING_BIN" emit --type start --cmd "$1" --pwd "$PWD" --shell "$_termling_shell" &!
 }
 
 __termling_precmd() {
@@ -132,7 +136,7 @@ __termling_precmd() {
   # Only report when a command actually ran (skip bare prompts / empty Enter).
   if (( _termling_start > 0 )); then
     local dur=$(( (EPOCHREALTIME - _termling_start) * 1000 ))
-    "$_TERMLING_BIN" emit --type end --code $code --dur ${dur%.*} --pwd "$PWD" --shell "$_termling_shell"
+    "$_TERMLING_BIN" emit --type end --code $code --dur ${dur%.*} --pwd "$PWD" --shell "$_termling_shell" &!
     _termling_start=0
   fi
 }
@@ -174,7 +178,9 @@ __termling_preexec() {
   fi
   _termling_ready=0
   _termling_start=$SECONDS
-  "$_TERMLING_BIN" emit --type start --cmd "$BASH_COMMAND" --pwd "$PWD" --shell "$_termling_shell"
+  # Fire-and-forget in a throwaway subshell so the prompt never waits on the
+  # spawn and bash prints no job-control chatter.
+  ( "$_TERMLING_BIN" emit --type start --cmd "$BASH_COMMAND" --pwd "$PWD" --shell "$_termling_shell" & ) 2>/dev/null
   return 0
 }
 
@@ -182,7 +188,7 @@ __termling_precmd() {
   # First in PROMPT_COMMAND, so $? is still the command's own exit code.
   local code=$?
   if (( _termling_start >= 0 )); then
-    "$_TERMLING_BIN" emit --type end --code "$code" --dur $(( (SECONDS - _termling_start) * 1000 )) --pwd "$PWD" --shell "$_termling_shell"
+    ( "$_TERMLING_BIN" emit --type end --code "$code" --dur $(( (SECONDS - _termling_start) * 1000 )) --pwd "$PWD" --shell "$_termling_shell" & ) 2>/dev/null
     _termling_start=-1
   fi
   return $code
@@ -218,12 +224,15 @@ else
 end
 
 function __termling_preexec --on-event fish_preexec
-    "$_TERMLING_BIN" emit --type start --cmd "$argv" --pwd "$PWD" --shell "$_termling_shell"
+    # Fire-and-forget: background + disown so the prompt never waits on the spawn.
+    "$_TERMLING_BIN" emit --type start --cmd "$argv" --pwd "$PWD" --shell "$_termling_shell" &
+    disown
 end
 
 function __termling_postexec --on-event fish_postexec
     set -l code $status
-    "$_TERMLING_BIN" emit --type end --code $code --dur $CMD_DURATION --pwd "$PWD" --shell "$_termling_shell"
+    "$_TERMLING_BIN" emit --type end --code $code --dur $CMD_DURATION --pwd "$PWD" --shell "$_termling_shell" &
+    disown
 end
 
 # Auto-spawn the companion beside this shell (disown so it isn't tracked).
@@ -244,6 +253,8 @@ mod tests {
         assert!(h.contains("add-zsh-hook precmd __termling_precmd"));
         assert!(h.contains("emit --type start"));
         assert!(h.contains("emit --type end"));
+        // The emit is backgrounded (`&!`) so the prompt never waits on it.
+        assert!(h.contains("--shell \"$_termling_shell\" &!"));
         // The binary path was substituted (no leftover placeholder).
         assert!(!h.contains("@TERMLING_BIN@"));
     }
@@ -255,6 +266,9 @@ mod tests {
         assert!(h.contains("PROMPT_COMMAND="));
         assert!(h.contains("emit --type start"));
         assert!(h.contains("emit --type end"));
+        // Both emits run in a throwaway background subshell so the prompt doesn't
+        // wait on the spawn (and bash stays quiet about job control).
+        assert!(h.contains("--shell \"$_termling_shell\" & ) 2>/dev/null"));
         // precmd reads the true exit code first thing, then restores it.
         assert!(h.contains("local code=$?"));
         assert!(h.contains("return $code"));
@@ -278,6 +292,8 @@ mod tests {
         assert!(h.contains("$CMD_DURATION"));
         // Exit status captured before the emit call can clobber it.
         assert!(h.contains("set -l code $status"));
+        // Both emits are backgrounded + disowned so the prompt never waits.
+        assert!(h.contains("--shell \"$_termling_shell\" &\n    disown"));
         assert!(!h.contains("@TERMLING_BIN@"));
     }
 
