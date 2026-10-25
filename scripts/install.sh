@@ -5,7 +5,9 @@
 #
 # No sudo: installs to ${TERMLING_INSTALL_DIR:-$HOME/.local/bin}. This is the
 # ONLY part of termling that touches the network — the binary itself never does.
-# Overrides: TERMLING_VERSION (e.g. v0.1.0), TERMLING_INSTALL_DIR.
+# Overrides: TERMLING_VERSION (e.g. v0.1.0), TERMLING_INSTALL_DIR,
+# TERMLING_INSTALL_ONLINE=1 (fetch the networked `--features online` build —
+# weather/stocks/news/dev-news/ai panes; still off until you set TERMLING_ONLINE=1).
 set -eu
 
 REPO="punitmishra/termling"
@@ -81,7 +83,13 @@ esac
 tag="v$ver"
 
 # --- download + verify ------------------------------------------------------
-archive="$BIN-$ver-$target.tar.gz"
+# TERMLING_INSTALL_ONLINE=1 picks the `-online` asset (the --features online
+# build); default is the zero-network build.
+variant=""
+if [ "${TERMLING_INSTALL_ONLINE:-0}" = "1" ]; then
+	variant="-online"
+fi
+archive="$BIN$variant-$ver-$target.tar.gz"
 base="https://github.com/$REPO/releases/download/$tag"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
