@@ -62,12 +62,12 @@ pane is this program.
 Grab the binary one of these ways, then wire up the shell hook (**Quick start**,
 below):
 
-> **v0.1.0 is out.** The **one-line installer** and **prebuilt tarballs** below
-> work now (macOS Apple Silicon + x86_64 Linux). **Homebrew** and `cargo install
-> termling` are marked _“pending publish”_ — the release pipeline is wired for
-> both but they stay dark until the maintainer adds the crates.io / Homebrew-tap
-> tokens (see **Releasing**). Any platform with a Rust toolchain can always
-> install from the repo today:
+> **Released.** The **one-line installer** and **prebuilt tarballs** below work
+> (macOS Apple Silicon + x86_64 Linux; a default and an `-online` variant each).
+> **Homebrew** and `cargo install termling` are marked _“pending publish”_ — the
+> release pipeline is wired for both but they stay dark until the maintainer adds
+> the crates.io / Homebrew-tap tokens (see **Releasing**). Any platform with a
+> Rust toolchain can always install from the repo today:
 >
 > ```sh
 > cargo install --git https://github.com/punitmishra/termling
@@ -624,7 +624,7 @@ is just pushing a tag:
 
 ```sh
 cargo test && cargo clippy --all-targets -- -D warnings   # green first
-git tag v0.1.0 && git push origin v0.1.0
+git tag vX.Y.Z && git push origin vX.Y.Z                   # matches Cargo.toml's version
 ```
 
 That fires `.github/workflows/release.yml`, which:
