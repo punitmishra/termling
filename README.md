@@ -493,9 +493,16 @@ Finance), news (Hacker News), dev-news (Lobsters), and an **ai tip** pane (Claud
 are the *only* parts of termling that touch the network, and they take **two
 gates, both off by default**:
 
-1. Build with the feature: `cargo build --features online` (or
-   `cargo install --features online …`). A stock build compiles none of this and
-   pulls no network dependencies.
+1. Get an online build. Each release publishes **two** prebuilt binaries per
+   platform — the default (zero-network) one and an `-online` one — so you can
+   either grab the prebuilt online binary or build it yourself:
+   ```sh
+   # prebuilt online binary via the installer:
+   curl -fsSL https://raw.githubusercontent.com/punitmishra/termling/main/scripts/install.sh | TERMLING_INSTALL_ONLINE=1 sh
+   # …or build it:
+   cargo install --features online --git https://github.com/punitmishra/termling
+   ```
+   A stock (default) build compiles none of this and pulls no network deps.
 2. Opt in at runtime: `TERMLING_ONLINE=1`. Without it, the online panes stay
    inert and make no requests.
 
@@ -622,10 +629,13 @@ git tag v0.1.0 && git push origin v0.1.0
 
 That fires `.github/workflows/release.yml`, which:
 
-1. **Builds** release tarballs for `aarch64`/`x86_64` macOS and `x86_64` Linux,
-   each with a `.sha256`.
+1. **Builds** release tarballs for Apple-Silicon macOS (`aarch64`) and `x86_64`
+   Linux — **two per platform**, a default (zero-network) and an `-online`
+   (`--features online`) variant — each with a `.sha256`. (Intel macOS is
+   currently dropped; those users `cargo install --git …` or build from source.)
 2. **Cuts the GitHub Release** with those assets — this alone makes the `curl`
-   one-liner and the prebuilt-tarball instructions work.
+   one-liner (and `TERMLING_INSTALL_ONLINE=1` for the online build) and the
+   prebuilt-tarball instructions work.
 3. **Publishes to crates.io** — only if the `CARGO_REGISTRY_TOKEN` repo secret is
    set (else skipped), which lights up `cargo install termling`.
 4. **Bumps the Homebrew formula** in the `punitmishra/homebrew-termling` tap —

@@ -34,22 +34,33 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-      - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }}
-      - name: Package
+      - name: Build & package (default + online)
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
-          bin="target/${{ matrix.target }}/release/termling"
-          strip "$bin" || true
-          staging="termling-${version}-${{ matrix.target }}"
-          mkdir -p "$staging"
-          cp "$bin" README.md LICENSE "$staging/"
-          # Files at the archive root (no wrapping dir) so `bin.install` is
-          # arch-independent.
-          tar czf "${staging}.tar.gz" -C "$staging" .
-          shasum -a 256 "${staging}.tar.gz" > "${staging}.tar.gz.sha256"
-          echo "Packaged ${staging}.tar.gz"
+          target="${{ matrix.target }}"
+          bin="target/${target}/release/termling"
+
+          # Package the currently-built binary as termling${1}-<ver>-<target>.tar.gz
+          # (${1} is "" for the default build, "-online" for the online one). Files
+          # sit at the archive root (no wrapping dir) so `bin.install` is arch-independent.
+          pkg() {
+            local name="termling${1}-${version}-${target}"
+            strip "$bin" || true
+            mkdir -p "$name"
+            cp "$bin" README.md LICENSE "$name/"
+            tar czf "${name}.tar.gz" -C "$name" .
+            shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256"
+            rm -rf "$name"
+            echo "Packaged ${name}.tar.gz"
+          }
+
+          # Default build (zero-network, two deps) — the recommended install.
+          cargo build --release --locked --target "$target"
+          pkg ""
+          # Online build (--features online: weather/stocks/news/dev-news/ai panes).
+          cargo build --release --locked --features online --target "$target"
+          pkg "-online"
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
